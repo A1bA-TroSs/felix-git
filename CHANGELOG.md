@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-05
+
+### Added
+
+- `history.py structure`, on by default: runs of commits that built one feature go behind merge commits on the integration branch, `main` becomes one merge per released version, and versions named only in old messages become annotated tags. `verify` checks that every commit keeps its files, identity, dates and message, and that every branch keeps its content.
+- `export` lists each commit's parents, version hints in its message and the versions its manifests held.
+- The MIT license.
+
 ## [1.1.0] - 2026-11-05
 
 ### Changed
@@ -25,6 +33,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `release.py`: the SemVer bump and a changelog section from the commits since the last tag.
 - `animate.py`: an animated WebP hero from captured frames.
 
-[Unreleased]: https://github.com/A1bA-TroSs/felix-git/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/A1bA-TroSs/felix-git/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/A1bA-TroSs/felix-git/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/A1bA-TroSs/felix-git/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/A1bA-TroSs/felix-git/releases/tag/v1.0.0

@@ -81,6 +81,24 @@ Don't put everything the cleanup adds on one branch. Split it by concern, each c
 
 Then, if the owner approved a release, follow section 4 to put it on `main`.
 
+## 8. Restructuring past history
+
+Vibe-coded history is usually one straight line of commits named "fixed" or "v1.25", with no branches and no tags. `history.py structure` turns it into the shape this guide describes, after the messages are rewritten:
+
+```
+before   o--o--o--o--o--o--o   develop     ("fixed", "fixed", "v1.0", ...)
+
+after    o-----M-----M--o-----M   develop
+          \   / \   /    \   /
+           o-o   o-o      o-o   feature/<x>, fix/<y>: the same commits, now inside merge bubbles
+         o--------R1-------R2     main: one merge per released version, tagged v1.0.0, v1.1.0
+```
+
+- Each run of commits that built one thing gets a merge commit with the same tree as its last commit, carrying that commit's identity and date. So `git log --first-parent develop` reads one line per feature.
+- Versions named in old messages become annotated tags and, for versions `main` held, release merges on `main`. Then `CHANGELOG.md` and GitHub Releases can be built from them (section 4).
+- What changes: the parents of commits, so every hash after the first group changes, as it already does after a message rewrite. What doesn't: every commit's files, author, dates and message, and every branch's final content. `verify` checks all of that against the backup bundle.
+- Cost: no extra reading. The grouping comes from the diffs already read for the messages, and the rebuild is plain git object writes.
+
 ## Sources
 
 - git-flow, with the 2020 note on when not to use it: https://nvie.com/posts/a-successful-git-branching-model/
@@ -88,3 +106,4 @@ Then, if the owner approved a release, follow section 4 to put it on `main`.
 - Generated release notes and `.github/release.yml`: https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
 - Keep a Changelog 1.1.0: https://keepachangelog.com/en/1.1.0/
 - Conventional Commits and SemVer: https://www.conventionalcommits.org/en/v1.0.0/ , https://semver.org/
+- Plumbing used by the rebuild: https://git-scm.com/docs/git-hash-object , https://git-scm.com/docs/git-update-ref

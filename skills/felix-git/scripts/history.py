@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""History rewrite: every commit keeps its parents' shape, author and dates, and its tree unless a purge
-the owner approved says otherwise.
+"""History rewrite: every commit keeps its author, dates and order, and its tree unless a purge the owner
+approved says otherwise. Parents change only where structure adds feature and release merges.
 
   history.py origin <clone>                         print the origin URL with any credential removed
   history.py export <clone> --out commits.json [--scan scan.json]
                                                     commits to rename, with a diffstat of each; messages
                                                     the scan flagged come back withheld
   history.py apply  <clone> --messages messages.json [--author "Name <email>"] [--keep-attribution] [--purge purge.json]
+  history.py structure <clone> --plan structure.json
+                                                    after apply: regroup runs of commits into feature-branch
+                                                    merges, rebuild main as release merges, tag versions
   history.py verify <clone> --bundle backup.bundle  compare rewritten commits with the originals
   history.py table  <clone> --commits commits.json --out old-to-new.md
   history.py push   <clone> [--yes] [--accept-findings]
@@ -18,6 +21,11 @@ purge.json removes data in the same pass: {"paths": ["dir/", "file"], "blobs": [
 "replace": [{"old": "text", "new": "text"}]}. Replacements are literal and also apply to messages.
 Trailers such as Co-authored-by are carried over, except Claude attribution lines, which are dropped unless
 --keep-attribution is given. --author re-attributes commits Claude made under its own identity to the user.
+structure.json, by original SHAs: {"branch": "develop", "groups": [{"name": "feature/x", "commits": [sha, ...]}],
+"releases": [{"commit": sha, "version": "1.2.0"}], "main": "main"}. A group is a run of consecutive single-parent
+commits on the branch's first-parent line; it becomes a branch merged back with a merge commit holding the same
+tree. With "main", that branch is rebuilt as one merge per release. Trees, authors, dates and messages of all
+existing commits stay; only their parents change, as verify checks.
 Work in a fresh clone: filter-repo removes origin, so apply records it in .git/felix-git.json,
 with any credential stripped from the URL. Pushing then uses the normal git credential helper.
 """
@@ -29,6 +37,9 @@ from pathlib import Path
 ISSUE = r"(?:#\d+|[\w.-]+/[\w.-]+#\d+|[A-Z][A-Z0-9]+-\d+|https?://[^\s@]+/\d+|[0-9a-f]{7,40})"
 TRAILER = re.compile(r"^(?:(?:Co-authored-by|Signed-off-by|Reviewed-by|Acked-by|Tested-by|Reported-by|Suggested-by|Helped-by): [^<>:\s]+(?: [^<>:\s]+){0,3} <[^<>\s]+@[^<>\s]+>"
                      rf"|Change-Id: I[0-9a-f]+|(?:Fixes|Closes|Refs): {ISSUE}(?:,\s*{ISSUE})*)$", re.I)
+VERSION_HINT = re.compile(r"\bv?(\d+\.\d+(?:\.\d+)?)\b")
+SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+BRANCH_NAME = re.compile(r"^(feature|fix|docs|chore|refactor|perf|test|build|ci|style)/[a-z0-9][a-z0-9.-]{0,60}$")
 CONVENTIONAL = re.compile(r"^(feat|fix|refactor|docs|chore|test|perf|build|ci|style|revert)(\([^)]+\))?!?: \S")
 # What may carry over: the shapes tools really write, so an injected sentence in one of these keys stays behind.
 KEEP_ATTR = re.compile(r"^(Claude-Session: (https?://[^\s@]+|[\w-]+)|🤖? *Generated with \[?Claude Code\]?(\(https?://[^\s@)]+\))?)$", re.I)
@@ -134,16 +145,40 @@ def cmd_export(a):
         rows.append({
             "sha": sha,
             "is_merge": len(parents) > 1,
+            "parents": parents,
             "date": git(a.repo, "log", "-1", "--format=%as", sha),
             "message": WITHHELD if sha[:10] in flagged else message,
             "stat": git(a.repo, "show", "--stat=120", "--format=", "--no-color", sha),
         })
         if sha[:10] in flagged:
             rows[-1]["message_digest"] = digest(message)
+        else:
+            hints = VERSION_HINT.findall(message.split("\n", 1)[0])
+            if hints:
+                rows[-1]["version_hint"] = hints
+                # A message's "v1.25" is ambiguous; the manifest at that commit says what was really shipped.
+                found = manifest_versions(a.repo, sha)
+                if found:
+                    rows[-1]["manifest_versions"] = found
     if not rows:
         sys.exit("this repository has no commits, so there is nothing to rewrite")
     Path(a.out).write_text(json.dumps(rows, indent=1, ensure_ascii=False), encoding="utf-8")
     print(f"{len(rows)} commits, {sum(r['is_merge'] for r in rows)} merges -> {a.out}")
+
+
+MANIFESTS = {"package.json": re.compile(r'^\s*"version"\s*:\s*"([^"]+)"', re.M),
+             "pyproject.toml": re.compile(r'^version\s*=\s*"([^"]+)"', re.M),
+             "Cargo.toml": re.compile(r'^version\s*=\s*"([^"]+)"', re.M)}
+
+
+def manifest_versions(repo, sha):
+    out = {}
+    for path, rx in MANIFESTS.items():
+        r = subprocess.run(["git", "-C", repo, "show", f"{sha}:{path}"], capture_output=True, text=True, errors="replace")
+        m = rx.search(r.stdout) if r.returncode == 0 else None
+        if m:
+            out[path] = m.group(1)
+    return out
 
 
 def check_messages(mapping):
@@ -387,6 +422,214 @@ def cmd_apply(a):
     print(f"rewrote {sum(1 for v in resolved.values() if v)} messages; run verify next")
 
 
+def structure_path(repo):
+    return Path(git(repo, "rev-parse", "--absolute-git-dir")) / "felix-git-structure.json"
+
+
+def load_structure_state(repo):
+    p = structure_path(repo)
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def raw_object(repo, oid):
+    return subprocess.run(["git", "-C", repo, "cat-file", "-p", oid], capture_output=True, check=True).stdout
+
+
+def write_object(repo, kind, data):
+    r = subprocess.run(["git", "-C", repo, "hash-object", "-t", kind, "-w", "--stdin"], input=data, capture_output=True, check=True)
+    return r.stdout.decode().strip()
+
+
+def with_parents(raw, parents):
+    """The same commit object with other parents, every other byte kept."""
+    header, _, body = raw.partition(b"\n\n")
+    out = []
+    for line in header.split(b"\n"):
+        if line.startswith(b"parent "):
+            continue
+        out.append(line)
+        if line.startswith(b"tree "):
+            out += [b"parent " + p.encode() for p in parents]
+    return b"\n".join(out) + b"\n\n" + body
+
+
+def header_line(raw, key):
+    for line in raw.partition(b"\n\n")[0].split(b"\n"):
+        if line.startswith(key + b" "):
+            return line[len(key) + 1:]
+    return b""
+
+
+def made_commit(repo, tree, parents, who, message):
+    """who: the 'Name <email> time tz' bytes of an existing commit's committer, reused for author and committer."""
+    data = (b"tree " + tree.encode() + b"\n" + b"".join(b"parent " + p.encode() + b"\n" for p in parents)
+            + b"author " + who + b"\ncommitter " + who + b"\n\n" + message.encode())
+    return write_object(repo, "commit", data)
+
+
+def semver(v):
+    m = SEMVER.match(v or "")
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def load_plan(path, repo, cmap):
+    try:
+        plan = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        sys.exit(f"{path} can't be read as JSON ({e}); nothing changed")
+    if not isinstance(plan, dict) or set(plan) - {"branch", "groups", "releases", "main"}:
+        sys.exit(f"{path}: only branch, groups, releases and main are allowed; nothing changed")
+    branch = plan.get("branch")
+    if not isinstance(branch, str) or not git(repo, "rev-parse", "--verify", "-q", f"refs/heads/{branch}", check=False):
+        sys.exit(f"{path}: branch must name a branch of this clone; nothing changed")
+    main = plan.get("main")
+    if main is not None and (not isinstance(main, str) or main == branch
+                             or not git(repo, "rev-parse", "--verify", "-q", f"refs/heads/{main}", check=False)):
+        sys.exit(f"{path}: main must name another branch of this clone; nothing changed")
+    chain = git(repo, "rev-list", "--first-parent", "--reverse", f"refs/heads/{branch}").splitlines()
+    at = {c: i for i, c in enumerate(chain)}
+    mid = lambda sha: cmap.get(sha, sha) if isinstance(sha, str) else None
+    groups, used, names = [], set(), set()
+    for g in plan.get("groups", []):
+        if not isinstance(g, dict) or not isinstance(g.get("commits"), list) or not g["commits"]:
+            sys.exit(f"{path}: each group needs a name and a non-empty commits list; nothing changed")
+        name = g.get("name")
+        if not isinstance(name, str) or not BRANCH_NAME.match(name) or name in names:
+            sys.exit(f"{path}: group name {name!r} must be a new <type>/<kebab-words> name, used once; nothing changed")
+        names.add(name)
+        commits = [mid(c) for c in g["commits"]]
+        if any(c not in at for c in commits):
+            sys.exit(f"{path}: {name} lists a commit that isn't on {branch}'s first-parent line; nothing changed")
+        idx = [at[c] for c in commits]
+        if idx != list(range(idx[0], idx[0] + len(idx))) or idx[0] == 0:
+            sys.exit(f"{path}: {name} must be consecutive commits on {branch}, oldest first, not starting at the root; nothing changed")
+        if any(len(git(repo, "log", "-1", "--format=%P", c).split()) != 1 for c in commits) or used & set(commits):
+            sys.exit(f"{path}: {name} holds a merge or a commit another group has; nothing changed")
+        used |= set(commits)
+        groups.append({"name": name, "commits": commits})
+    releases, last = [], None
+    for r in plan.get("releases", []):
+        c, v = (mid(r.get("commit")), r.get("version")) if isinstance(r, dict) else (None, None)
+        if c not in at or not semver(v):
+            sys.exit(f"{path}: each release needs a commit on {branch} and a version like 1.2.0; nothing changed")
+        if last and (at[c] <= at[last[0]] or semver(v) <= semver(last[1])):
+            sys.exit(f"{path}: releases must go oldest first, with rising versions; nothing changed")
+        if git(repo, "rev-parse", "--verify", "-q", f"refs/tags/v{v}", check=False):
+            sys.exit(f"{path}: tag v{v} already exists; nothing changed")
+        releases.append({"commit": c, "version": v})
+        last = (c, v)
+    if not groups and not releases:
+        sys.exit(f"{path}: no groups and no releases, so there is nothing to structure")
+    return branch, main, chain, groups, releases
+
+
+def cmd_structure(a):
+    cmap = commit_map(a.repo)
+    if not cmap or not state_path(a.repo).exists():
+        sys.exit("run apply on this clone first")
+    if load_structure_state(a.repo):
+        sys.exit("this clone is already structured. Clone again to redo it.")
+    branch, main, chain, groups, releases = load_plan(a.plan, a.repo, cmap)
+    last_of = {g["commits"][-1]: g for g in groups}
+    node, line, merges = {}, {}, []
+    for c in git(a.repo, "rev-list", "--reverse", "--topo-order", "--all").splitlines():
+        raw = raw_object(a.repo, c)
+        parents = git(a.repo, "log", "-1", "--format=%P", c).split()
+        n = write_object(a.repo, "commit", with_parents(raw, [line[p] for p in parents]))
+        node[c] = line[c] = n
+        g = last_of.get(c)
+        if g:
+            base = git(a.repo, "log", "-1", "--format=%P", g["commits"][0]).split()[0]
+            m = made_commit(a.repo, git(a.repo, "rev-parse", f"{n}^{{tree}}"), [line[base], n],
+                            header_line(raw, b"committer"), f"Merge branch '{g['name']}' into {branch}\n")
+            line[c] = m
+            merges.append({"name": g["name"], "base": base, "last": c, "merge": m})
+    ref_tips, new_tags, main_line = {}, {}, []
+    old_main = git(a.repo, "rev-parse", f"refs/heads/{main}") if main else None
+    # Only versions main already held become release merges there; a later one is tagged on the branch alone.
+    on_main = [r for r in releases if main and
+               subprocess.run(["git", "-C", a.repo, "merge-base", "--is-ancestor", r["commit"], old_main]).returncode == 0]
+    tag_at = {r["version"]: line[r["commit"]] for r in releases}
+    if main:
+        prev = line[chain[0]]
+        for r in on_main:
+            target = line[r["commit"]]
+            if target != prev:
+                prev = made_commit(a.repo, git(a.repo, "rev-parse", f"{target}^{{tree}}"), [prev, target],
+                                   header_line(raw_object(a.repo, node[r["commit"]]), b"committer"),
+                                   f"Merge branch 'release/{r['version']}'\n")
+                main_line.append({"version": r["version"], "merge": prev, "release": r["commit"]})
+            tag_at[r["version"]] = prev
+        if line[old_main] != prev and not (on_main and line[old_main] == line[on_main[-1]["commit"]]):
+            prev = made_commit(a.repo, git(a.repo, "rev-parse", f"{line[old_main]}^{{tree}}"), [prev, line[old_main]],
+                               header_line(raw_object(a.repo, node[old_main]), b"committer"), f"Merge branch '{branch}' into {main}\n")
+            main_line.append({"version": None, "merge": prev, "release": old_main})
+    for line_ in lines(git(a.repo, "for-each-ref", "--format=%(refname) %(objectname) %(objecttype)", "refs/heads", "refs/tags")):
+        ref, oid, kind = line_.split(" ")
+        if kind == "commit":
+            new = prev if main and ref == f"refs/heads/{main}" else line.get(oid, oid)
+        elif kind == "tag":
+            raw = raw_object(a.repo, oid)
+            target = header_line(raw, b"object").decode()
+            if header_line(raw, b"type") != b"commit" or target not in line:
+                continue
+            new = write_object(a.repo, "tag", raw.replace(b"object " + target.encode() + b"\n", b"object " + line[target].encode() + b"\n", 1))
+        else:
+            continue
+        if new != oid:
+            git(a.repo, "update-ref", ref, new, oid)
+        ref_tips[ref] = git(a.repo, "rev-parse", f"{new}^{{commit}}")
+    for r in releases:
+        target = tag_at[r["version"]]
+        who = header_line(raw_object(a.repo, node[r["commit"]]), b"committer")
+        tag = write_object(a.repo, "tag", b"object " + target.encode() + b"\ntype commit\ntag v" + r["version"].encode()
+                           + b"\ntagger " + who + b"\n\nv" + r["version"].encode() + b"\n")
+        git(a.repo, "update-ref", f"refs/tags/v{r['version']}", tag, "")
+        new_tags[f"refs/tags/v{r['version']}"] = tag
+        ref_tips[f"refs/tags/v{r['version']}"] = target
+    structure_path(a.repo).write_text(json.dumps({
+        "branch": branch, "main": main, "node": node, "line": line, "merges": merges, "main_line": main_line,
+        "old_main": old_main, "releases": releases, "new_tags": new_tags, "ref_tips": ref_tips}))
+    git(a.repo, "reflog", "expire", "--expire=now", "--all", check=False)
+    print(json.dumps({"feature_merges": len(merges), "release_merges_on_main": sum(1 for x in main_line if x["version"]),
+                      "tags": sorted(new_tags), "next": "run verify"}, indent=1))
+
+
+def structure_problems(repo, original, cmap, sst):
+    """Checks the structure step on its own terms: same content, same order, only the parents it promised."""
+    fail = []
+    node, line = sst["node"], sst["line"]
+    tree = lambda c: git(repo, "rev-parse", f"{c}^{{tree}}")
+    parents = lambda c: git(repo, "log", "-1", "--format=%P", c).split()
+    who = lambda c: header_line(raw_object(repo, c), b"committer")
+    for m in sst["merges"]:
+        if parents(m["merge"]) != [line[m["base"]], node[m["last"]]] or tree(m["merge"]) != tree(node[m["last"]]):
+            fail.append({"merge": m["name"], "why": "the feature merge doesn't join its branch with the same tree"})
+        if who(m["merge"]) != who(node[m["last"]]):
+            fail.append({"merge": m["name"], "why": "the feature merge doesn't carry its last commit's identity and date"})
+    prev = None
+    for m in sst["main_line"]:
+        p = parents(m["merge"])
+        target = line[m["release"]]
+        if len(p) != 2 or p[1] != target or tree(m["merge"]) != tree(target) or (prev and p[0] != prev):
+            fail.append({"merge": m["merge"][:10], "why": "a release merge on main doesn't hold its release's tree"})
+        prev = m["merge"]
+    for ref, tip in sst["ref_tips"].items():
+        now = git(repo, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}", check=False)
+        if now != tip:
+            fail.append({"ref": ref, "why": "moved after structure"})
+    for ref, old in json.loads(state_path(repo).read_text())["tips"].items():
+        name = ref.replace("refs/remotes/origin/", "refs/heads/")
+        now = git(repo, "rev-parse", "--verify", "-q", f"{name}^{{commit}}", check=False)
+        if now and tree(now) != git(original, "rev-parse", f"{old}^{{tree}}"):
+            fail.append({"ref": name, "why": "its content differs from before the rewrite"})
+    reachable = set(git(repo, "rev-list", "--all").splitlines())
+    lost = [c for c in node.values() if c not in reachable]
+    if lost:
+        fail.append({"why": f"{len(lost)} rewritten commits are no longer on any branch or tag"})
+    return fail
+
+
 def commit_map(repo):
     path = Path(git(repo, "rev-parse", "--absolute-git-dir")) / "filter-repo" / "commit-map"
     rows = {}
@@ -400,7 +643,16 @@ def commit_map(repo):
 
 def map_digest(repo):
     path = Path(git(repo, "rev-parse", "--absolute-git-dir")) / "filter-repo" / "commit-map"
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    extra = structure_path(repo).read_bytes() if structure_path(repo).exists() else b""
+    return hashlib.sha256(path.read_bytes() + extra).hexdigest()
+
+
+def final_map(repo):
+    """Original SHA to the commit that holds it now: through filter-repo, then structure if it ran."""
+    cmap, sst = commit_map(repo), load_structure_state(repo)
+    if not sst:
+        return cmap
+    return {old: sst["node"].get(mid, mid) for old, mid in cmap.items()}
 
 
 def cmd_verify(a):
@@ -423,7 +675,10 @@ def cmd_verify(a):
         sys.exit(f"can't read the backup bundle {bundle}: {r.stderr.strip()[:200]}")
     fmt = "%T%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI"
     fail, checked, renamed = [], 0, 0
-    cmap = commit_map(a.repo)
+    cmap = final_map(a.repo)
+    mids, sst = commit_map(a.repo), load_structure_state(a.repo)
+    # With structure, a parent may now be the feature merge that stands for it on the line.
+    parent_of = (lambda p: sst["line"].get(mids.get(p, p), mids.get(p, p))) if sst else (lambda p: cmap.get(p, p))
     st = json.loads(state_path(a.repo).read_text()) if state_path(a.repo).exists() else {}
     purge, owner = st.get("purge"), st.get("owner")
     seen, matched = {}, set()
@@ -453,7 +708,7 @@ def cmd_verify(a):
         if not o:
             fail.append({"old": old, "new": new, "why": "this commit isn't in the bundle; is it the right one?"})
             continue
-        op = [cmap.get(p, p) for p in git(str(tmp), "log", "-1", "--format=%P", old).split()]
+        op = [parent_of(p) for p in git(str(tmp), "log", "-1", "--format=%P", old).split()]
         if op != git(a.repo, "log", "-1", "--format=%P", new).split():
             fail.append({"old": old, "new": new, "why": "parents differ"})
         renamed += git(str(tmp), "log", "-1", "--format=%B", old) != git(a.repo, "log", "-1", "--format=%B", new)
@@ -469,6 +724,8 @@ def cmd_verify(a):
         for line in lines(git(a.repo, "for-each-ref", "--format=%(refname) %(taggername) %(taggeremail)", "refs/tags")):
             if any(r["old"] in line for r in purge["replace"]):
                 fail.append({"purge": line.split()[0], "why": "the tagger holds replaced text; a purge can't change it"})
+    if sst:
+        fail += structure_problems(a.repo, str(tmp), mids, sst)
     shutil.rmtree(tmp)
     print(json.dumps({"checked": checked, "messages_changed": renamed, "failures": fail}, indent=1))
     if state_path(a.repo).exists():
@@ -484,7 +741,7 @@ def cmd_table(a):
     if not commit_map(a.repo):
         sys.exit("no table yet: apply has not run on this clone")
     rows = json.loads(Path(a.commits).read_text(encoding="utf-8"))
-    cmap = commit_map(a.repo)
+    cmap = final_map(a.repo)
     out = ["| old | new | old message | new message |", "|---|---|---|---|"]
     cell = lambda t: t.strip().replace("|", "\\|").replace("\n", "<br>")
     for r in rows:
@@ -533,6 +790,10 @@ def cmd_push(a):
             plan.append((target, old, new, ref))
         elif not new:
             kept.append(target)
+    sst = load_structure_state(a.repo)
+    for ref, obj in (sst or {}).get("new_tags", {}).items():
+        if git(a.repo, "rev-parse", "--verify", "-q", ref, check=False) == obj:
+            plan.append((ref, "", obj, None))
     print(json.dumps({"remote": st["origin"], "verified": st.get("verified") == map_digest(a.repo),
                       "not_in_this_clone_so_old_history_stays_on_the_remote": kept,
                       "note": "rewritten refs only; --yes also rescans and refuses if unverified. New and deleted branches are separate steps.",
@@ -558,8 +819,9 @@ def cmd_push(a):
     if restored:
         sys.exit(f"refused: these refs were put back on their old commits, so a push would leave them unrewritten: {', '.join(restored)}")
     cmap = commit_map(a.repo)
+    expected = (lambda r, src: sst["ref_tips"].get(r)) if sst else (lambda r, src: cmap.get(st["tips"][src]))
     moved = [r for r, _, n, src in plan
-             if git(a.repo, "rev-parse", "--verify", "-q", f"{n}^{{commit}}", check=False) != cmap.get(st["tips"][src])
+             if git(a.repo, "rev-parse", "--verify", "-q", f"{n}^{{commit}}", check=False) != expected(r, src)
              or (r.startswith("refs/tags/") and st.get("verified_tags", {}).get(r) != n)]
     if moved:
         sys.exit(f"refused: these refs moved after the rewrite, so a push would publish commits verify never checked or drop later ones: {', '.join(moved)}")
@@ -601,6 +863,7 @@ def main():
     x.add_argument("--drop-attribution", action="store_true", help=argparse.SUPPRESS)  # the default now; kept for old command lines
     x.add_argument("--author", help='"Name <email>" that replaces Claude\'s own identity on commits')
     x.add_argument("--purge"); x.set_defaults(fn=cmd_apply)
+    g = sub.add_parser("structure"); g.add_argument("repo"); g.add_argument("--plan", required=True); g.set_defaults(fn=cmd_structure)
     v = sub.add_parser("verify"); v.add_argument("repo"); v.add_argument("--bundle", required=True); v.set_defaults(fn=cmd_verify)
     t = sub.add_parser("table"); t.add_argument("repo"); t.add_argument("--commits", required=True); t.add_argument("--out", required=True); t.set_defaults(fn=cmd_table)
     u = sub.add_parser("push"); u.add_argument("repo"); u.add_argument("--yes", action="store_true"); u.add_argument("--accept-findings", action="store_true"); u.set_defaults(fn=cmd_push)
