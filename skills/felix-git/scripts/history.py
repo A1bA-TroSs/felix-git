@@ -7,7 +7,7 @@ approved says otherwise. Parents change only where structure adds feature and re
                                                     commits to rename, with a diffstat of each; messages
                                                     the scan flagged come back withheld
   history.py apply  <clone> --messages messages.json [--author "Name <email>"] [--keep-attribution] [--purge purge.json]
-  history.py structure <clone> --plan structure.json
+  history.py structure <clone> --plan structure.json | --undo
                                                     after apply: regroup runs of commits into feature-branch
                                                     merges, rebuild main as release merges, tag versions
   history.py verify <clone> --bundle backup.bundle  compare rewritten commits with the originals
@@ -527,9 +527,23 @@ def cmd_structure(a):
     cmap = commit_map(a.repo)
     if not cmap or not state_path(a.repo).exists():
         sys.exit("run apply on this clone first")
+    if a.undo:
+        sst = load_structure_state(a.repo)
+        if not sst:
+            sys.exit("nothing to undo: structure hasn't run on this clone")
+        for ref in sst["new_tags"]:
+            git(a.repo, "update-ref", "-d", ref)
+        for ref, oid in sst["before"].items():
+            git(a.repo, "update-ref", ref, oid)
+        structure_path(a.repo).unlink()
+        print("structure undone: branches and tags are back to the message-only rewrite; run verify again")
+        return
+    if not a.plan:
+        sys.exit("give --plan structure.json, or --undo")
     if load_structure_state(a.repo):
-        sys.exit("this clone is already structured. Clone again to redo it.")
+        sys.exit("this clone is already structured. Undo it with --undo first.")
     branch, main, chain, groups, releases = load_plan(a.plan, a.repo, cmap)
+    before = dict(l.split(" ")[::-1] for l in lines(git(a.repo, "for-each-ref", "--format=%(objectname) %(refname)", "refs/heads", "refs/tags")))
     last_of = {g["commits"][-1]: g for g in groups}
     node, line, merges = {}, {}, []
     for c in git(a.repo, "rev-list", "--reverse", "--topo-order", "--all").splitlines():
@@ -589,8 +603,7 @@ def cmd_structure(a):
         ref_tips[f"refs/tags/v{r['version']}"] = target
     structure_path(a.repo).write_text(json.dumps({
         "branch": branch, "main": main, "node": node, "line": line, "merges": merges, "main_line": main_line,
-        "old_main": old_main, "releases": releases, "new_tags": new_tags, "ref_tips": ref_tips}))
-    git(a.repo, "reflog", "expire", "--expire=now", "--all", check=False)
+        "old_main": old_main, "releases": releases, "new_tags": new_tags, "ref_tips": ref_tips, "before": before}))
     print(json.dumps({"feature_merges": len(merges), "release_merges_on_main": sum(1 for x in main_line if x["version"]),
                       "tags": sorted(new_tags), "next": "run verify"}, indent=1))
 
@@ -863,7 +876,8 @@ def main():
     x.add_argument("--drop-attribution", action="store_true", help=argparse.SUPPRESS)  # the default now; kept for old command lines
     x.add_argument("--author", help='"Name <email>" that replaces Claude\'s own identity on commits')
     x.add_argument("--purge"); x.set_defaults(fn=cmd_apply)
-    g = sub.add_parser("structure"); g.add_argument("repo"); g.add_argument("--plan", required=True); g.set_defaults(fn=cmd_structure)
+    g = sub.add_parser("structure"); g.add_argument("repo"); g.add_argument("--plan"); g.add_argument("--undo", action="store_true")
+    g.set_defaults(fn=cmd_structure)
     v = sub.add_parser("verify"); v.add_argument("repo"); v.add_argument("--bundle", required=True); v.set_defaults(fn=cmd_verify)
     t = sub.add_parser("table"); t.add_argument("repo"); t.add_argument("--commits", required=True); t.add_argument("--out", required=True); t.set_defaults(fn=cmd_table)
     u = sub.add_parser("push"); u.add_argument("repo"); u.add_argument("--yes", action="store_true"); u.add_argument("--accept-findings", action="store_true"); u.set_defaults(fn=cmd_push)

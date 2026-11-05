@@ -1402,6 +1402,16 @@ class Structure(unittest.TestCase):
         st.write_text(json.dumps(d))
         self.assertNotEqual(self.hist("verify", "--bundle", str(self.bundle), check=False).returncode, 0)
 
+    def test_undo_returns_to_message_only(self):
+        refs = lambda: sh("git", "-C", str(self.work), "for-each-ref", "--format=%(refname) %(objectname)").stdout
+        before = refs()
+        self.assertEqual(self.structure().returncode, 0)
+        self.assertNotEqual(refs(), before)
+        self.assertEqual(self.hist("structure", "--undo").returncode, 0)
+        self.assertEqual(refs(), before)
+        self.assertEqual(self.hist("verify", "--bundle", str(self.bundle), check=False).returncode, 0)
+        self.assertEqual(self.structure().returncode, 0)  # and it can be redone
+
     @needs_scanner
     def test_push_sends_branches_and_new_tag(self):
         self.structure()
