@@ -1212,5 +1212,61 @@ class Animate(unittest.TestCase):
             self.assertIn(b"ANIM", data[:64])
 
 
+class Release(unittest.TestCase):
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.t)
+        self.r = self.t / "r"
+        sh("git", "init", "-q", "-b", "main", str(self.r))
+        self.commit("chore: start")
+
+    def commit(self, msg):
+        f = self.r / "f.txt"
+        f.write_text((f.read_text() if f.exists() else "") + msg + "\n")
+        sh("git", "-C", str(self.r), "add", ".")
+        sh("git", "-C", str(self.r), "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", msg)
+
+    def plan(self, *extra):
+        r = subprocess.run([sys.executable, str(S / "release.py"), str(self.r), *extra], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_feat_is_minor_and_fix_is_patch(self):
+        sh("git", "-C", str(self.r), "tag", "v1.2.0")
+        self.commit("fix(api): handle empty body")
+        self.assertEqual(self.plan()["next"], "1.2.1")
+        self.commit("feat(ui): add dark mode")
+        d = self.plan()
+        self.assertEqual((d["since"], d["bump"], d["next"]), ("v1.2.0", "minor", "1.3.0"))
+        self.assertIn("### Added", d["changelog"])
+        self.assertIn("- **ui:** add dark mode", d["changelog"])
+        self.assertIn("- **api:** handle empty body", d["changelog"])
+
+    def test_breaking_is_major_but_minor_before_one(self):
+        sh("git", "-C", str(self.r), "tag", "v1.0.0")
+        self.commit("feat!: drop the v1 API")
+        self.assertEqual(self.plan()["next"], "2.0.0")
+        self.assertIn("**Breaking:**", self.plan()["changelog"])
+        sh("git", "-C", str(self.r), "tag", "v0.4.2", "HEAD~1")
+        self.assertEqual(self.plan("--since", "v0.4.2")["next"], "0.5.0")
+
+    def test_footer_breaking_change_counts(self):
+        sh("git", "-C", str(self.r), "tag", "v2.1.0")
+        self.commit("refactor: rename config keys\n\nBREAKING CHANGE: old keys are ignored")
+        self.assertEqual(self.plan()["bump"], "major")
+
+    def test_nothing_since_tag(self):
+        sh("git", "-C", str(self.r), "tag", "v1.0.0")
+        self.assertTrue(self.plan()["nothing_to_release"])
+
+    def test_no_tag_uses_current_and_lists_other_and_unparsed(self):
+        self.commit("docs: explain setup")
+        self.commit("update stuff")
+        d = self.plan("--current", "1.2.7")
+        self.assertEqual((d["bump"], d["next"]), ("patch", "1.2.8"))
+        self.assertEqual(len(d["unparsed"]), 1)
+        self.assertNotIn("explain setup", d["changelog"])
+
+
 if __name__ == "__main__":
     unittest.main()
