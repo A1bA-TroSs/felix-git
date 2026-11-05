@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Render an HTML or SVG file Claude wrote to PNG. No image model and no API key.
 
-  render.py in.html out.png [--width 1280 --height 640 --scale 2 --dark]
+  render.py in.html out.png [--width 1280 --height 640 --scale 2 --dark] [--transparent]
 
 Sets data-theme="light" or "dark" on the root element, so write theme styles against
 [data-theme=dark]; prefers-color-scheme is not reliable across renderers. Network is blocked,
-so the page must be self-contained.
+so the page must be self-contained. --transparent keeps the alpha channel where the page
+leaves the background unpainted, for banners that sit on GitHub's own background.
 Uses Python Playwright, then a Chrome or Chromium binary, then rsvg-convert for SVG.
 """
 import argparse, os, re, shutil, subprocess, sys, tempfile
@@ -33,7 +34,7 @@ def with_playwright(src, out, a):
         page.route("**/*", lambda r: r.continue_() if r.request.url.startswith("file:") else r.abort())
         page.goto(src.as_uri())
         page.wait_for_load_state("load")
-        page.screenshot(path=str(out))
+        page.screenshot(path=str(out), omit_background=a.transparent)
         b.close()
 
 
@@ -56,6 +57,8 @@ def chrome_once(exe, src, out, a):
                *NO_NETWORK,
                f"--window-size={a.width},{a.height}", f"--force-device-scale-factor={a.scale}",
                f"--screenshot={out}"]
+        if a.transparent:
+            cmd.append("--default-background-color=00000000")
         cmd.append(src.as_uri())
         subprocess.run(cmd, check=True, capture_output=True, timeout=60)
 
@@ -89,6 +92,7 @@ def main():
     p.add_argument("src"); p.add_argument("out")
     p.add_argument("--width", type=int, default=1280); p.add_argument("--height", type=int, default=640)
     p.add_argument("--scale", type=int, default=2); p.add_argument("--dark", action="store_true")
+    p.add_argument("--transparent", action="store_true")
     a = p.parse_args()
     if min(a.width, a.height, a.scale) < 1:
         sys.exit("width, height and scale must be at least 1")
