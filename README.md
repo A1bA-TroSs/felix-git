@@ -91,7 +91,7 @@ Linux and Windows work too; `doctor.py` prints the matching `apt`, `dnf` or `win
 python3 -m unittest tests.test_scripts
 ```
 
-126 tests. CI runs them on Ubuntu with the same tools.
+127 tests. CI runs them on Ubuntu with the same tools.
 
 ## License
 

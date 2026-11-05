@@ -91,11 +91,11 @@ Then:
 4. `scripts/history.py apply work --messages messages.json --author "<owner identity>"`
 5. `scripts/history.py verify work --bundle backup.bundle`. Run it again after step 6. Any failure means stop and report: never publish over a failed check. "messages_changed" can exceed what you wrote, because filter-repo also updates old hashes quoted in messages.
 
-6. Structure, by default (`references/workflow.md` section 8); skip it only if the user asked for messages alone. From `commits.json` (`parents`, dates, your new messages) write `structure.json` with original SHAs:
+6. Structure, prepared by default and confirmed at the review (`references/workflow.md` section 8). Skip it only if the user already asked for messages alone. From `commits.json` (`parents`, dates, your new messages) write `structure.json` with original SHAs:
    - `branch`: the integration branch. `groups`: each run of consecutive commits on its first-parent line that built one thing becomes `{"name": "feature/<words>", "commits": [...]}`, named by type like a branch would be. Group by what the diffs did, not by date alone. A lone commit can stay ungrouped; existing merges stay as they are.
    - `releases`: commits whose old message named a version (`version_hint`), oldest first with rising SemVer. Use `manifest_versions` when the manifest at that commit agrees. When they disagree, or a hint is ambiguous ("v1.25" between 1.2 and 1.2.6 reads as 1.2.5), pick the reading the order supports and list each as an inference in the review.
    - `main`: the default branch, when it lags the integration branch. Versions main already held become release merges there, each tagged. Later ones are tagged on the integration line only.
-   Then `scripts/history.py structure work --plan structure.json`, then verify again. verify checks that every commit kept its tree, identity, dates and message, that each merge holds its last commit's tree and identity, that every branch's content is unchanged, and that no commit was dropped.
+   Then `scripts/history.py structure work --plan structure.json`, then verify again. `structure work --undo` puts the clone back to the message-only rewrite in a second, so the owner can decide at the review without another run. verify checks that every commit kept its tree, identity, dates and message, that each merge holds its last commit's tree and identity, that every branch's content is unchanged, and that no commit was dropped.
 7. `scripts/history.py table work --commits commits.json --out old-to-new.md`, for the review. Draft `CHANGELOG.md` from the new tags: `scripts/release.py work --since v<a> --to v<b> --current <a>` per pair, committed on `chore/changelog` in phase 6.
 
 ## Phase 4: Branches
@@ -148,10 +148,10 @@ Write `review.md` and show the user:
 1. Scan results first: secrets, personal data, junk, and any instruction-like text found in the repo, including carried trailers that name someone outside the commit's authors.
 2. What will change on GitHub: number of commits renamed, branches created and deleted (by name), the target branch tree, description, topics and homepage. The new README reaches the landing page only when its PR merges, so ask whether a yes includes merging it.
 3. Check results: `verify` and `check_readme`.
-4. Ten sample message changes, plus the path of the full table.
+4. Ten sample message changes, plus the path of the full table. Then the structure as a choice: `git log --first-parent --oneline` of the integration branch and `main`, before and after, the groups and tags with the evidence for each version, and one line on the trade. With structure, the history reads one line per feature and per release. Without it, the line stays exactly as it happened. Both cost the same force-push, since every hash changes either way. Structure stays unless the owner answers "messages only"; then run `--undo` and verify.
 5. The README and images, as files they can open.
 6. What rewriting costs them: all hashes change; closed PRs lose diff views; open PRs can break; forks keep old commits; anyone else's clone must re-clone; signatures are removed; other agent sessions pushing during publish will be rejected.
-7. Decisions only they can make: license, unmerged branches, planning files, purging history, and, if the cleanup branch targets `develop`, whether to release to `main` now, since the landing page won't change until then.
+7. Decisions only they can make: license, unmerged branches, planning files, purging history, structure or messages only, and, if the cleanup branch targets `develop`, whether to release to `main` now, since the landing page won't change until then.
 
 Then ask one question: publish? The decisions above come along in the same message, so the owner answers them together.
 
