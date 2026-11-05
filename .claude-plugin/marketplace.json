@@ -1,0 +1,21 @@
+{
+  "name": "felix-git",
+  "owner": {
+    "name": "A1bA-TroSs"
+  },
+  "metadata": {
+    "description": "felix-git: tidy a GitHub repository's history, branches and README.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "felix-git",
+      "description": "Clean up a GitHub repository: Conventional Commit history written from the diffs, optional purge of personal data, a main/develop/feature branch model, a secret and screenshot scan, and a README with a banner and real product captures.",
+      "version": "1.0.0",
+      "author": {
+        "name": "A1bA-TroSs"
+      },
+      "source": "./"
+    }
+  ]
+}

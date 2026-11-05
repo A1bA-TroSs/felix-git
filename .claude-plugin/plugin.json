@@ -1,0 +1,12 @@
+{
+  "name": "felix-git",
+  "version": "1.0.0",
+  "description": "Clean up a GitHub repository: Conventional Commit history written from the diffs, optional purge of personal data, a main/develop/feature branch model, a secret and screenshot scan, and a README with a banner and real product captures.",
+  "author": {
+    "name": "A1bA-TroSs",
+    "url": "https://github.com/A1bA-TroSs"
+  },
+  "homepage": "https://github.com/A1bA-TroSs/felix-git",
+  "repository": "https://github.com/A1bA-TroSs/felix-git",
+  "keywords": ["git", "github", "commits", "conventional-commits", "readme", "branches", "cleanup"]
+}
