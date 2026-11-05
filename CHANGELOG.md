@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-05
+
+### Added
+
+- `history.py structure --undo`, and a review that shows the history before and after so the owner can keep the structure or choose messages only.
+
 ## [1.2.0] - 2026-11-05
 
 ### Added
@@ -33,7 +39,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `release.py`: the SemVer bump and a changelog section from the commits since the last tag.
 - `animate.py`: an animated WebP hero from captured frames.
 
-[Unreleased]: https://github.com/A1bA-TroSs/felix-git/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/A1bA-TroSs/felix-git/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/A1bA-TroSs/felix-git/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/A1bA-TroSs/felix-git/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/A1bA-TroSs/felix-git/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/A1bA-TroSs/felix-git/releases/tag/v1.0.0
