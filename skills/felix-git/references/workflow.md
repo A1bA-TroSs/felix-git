@@ -74,7 +74,7 @@ Don't put everything the cleanup adds on one branch. Split it by concern, each c
 
 | Branch | Holds |
 |---|---|
-| `chore/git-hygiene` | `.gitignore` additions, untracking junk, `.githooks/commit-msg`, PR template, `.github/release.yml`, the `CLAUDE.md` git section |
+| `chore/git-hygiene` | `.gitignore` additions, untracking junk, `.githooks/commit-msg`, PR template, `.github/release.yml`, `.claude/settings.json` with attribution off, the `CLAUDE.md` git section |
 | `docs/readme` | README and `docs/readme/` images |
 | `fix/<what>` | any public text that was false, such as a manifest's description |
 | `chore/changelog` | a first `CHANGELOG.md`, when the owner wants one, built from the rewritten history |

@@ -32,6 +32,7 @@ or "my repo is a mess", "make the README sell this project", "fix the commits an
 - **Releases.** `release.py` reads the Conventional Commits since the last tag, picks the SemVer bump and drafts a Keep a Changelog section. A release goes through `release/x.y.z` with the version bump and `CHANGELOG.md`, is merged into `main`, tagged, published as a GitHub Release and merged back into `develop`.
 - **Scan.** Runs gitleaks over every ref and commit message, flags personal addresses, junk and large files, and opens every image version, since a scanner can't read an address inside a screenshot.
 - **README.** Researches what the project really does and why someone would choose it, then writes the page: a title banner, a real capture of the product (animated when the app can run, always with demo data), a social card, and claims that each point to evidence.
+- **Your name on the work.** Claude attribution is off by default: Claude's co-author and "Generated with" lines are dropped from history, commits Claude Code made under its own identity are re-attributed to you (checked by `verify`), and new commits and PRs carry none. `/felix-git:setup` can turn Claude Code's attribution setting off too.
 - **Staying clean.** Adds a commit-msg hook, a PR template and a short git section for coding agents, where most new mess comes from.
 
 ## How a run goes
@@ -90,7 +91,7 @@ Linux and Windows work too; `doctor.py` prints the matching `apt`, `dnf` or `win
 python3 -m unittest tests.test_scripts
 ```
 
-116 tests. CI runs them on Ubuntu with the same tools.
+121 tests. CI runs them on Ubuntu with the same tools.
 
 ## License
 

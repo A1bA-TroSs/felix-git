@@ -713,6 +713,56 @@ class History(Base):
         self.assertRegex(raw, b"caf(\xe9|\xc3\xa9) note")
         self.assertNotIn(b"Co-Authored-By: Claude", raw)
 
+    def test_attribution_dropped_by_default_and_kept_on_request(self):
+        self.g("commit", "-q", "--allow-empty", "-m", "x\n\nCo-Authored-By: Claude <c@example.com>\nCo-authored-by: Ann <a@example.com>")
+        self.reclone()
+        (self.t / "m.json").write_text("{}")
+        self.hist("apply", "--messages", str(self.t / "m.json"))
+        log = sh("git", "-C", str(self.work), "log", "--all", "--format=%B").stdout
+        self.assertNotIn("Co-Authored-By: Claude", log)
+        self.assertIn("Co-authored-by: Ann", log)
+        self.reclone()
+        self.hist("apply", "--messages", str(self.t / "m.json"), "--keep-attribution")
+        self.assertIn("Co-Authored-By: Claude", sh("git", "-C", str(self.work), "log", "--all", "--format=%B").stdout)
+
+    def claude_commit(self):
+        claude = dict(ENV, GIT_AUTHOR_NAME="Claude", GIT_AUTHOR_EMAIL="noreply@anthropic.com",
+                      GIT_COMMITTER_NAME="Claude", GIT_COMMITTER_EMAIL="noreply@anthropic.com")
+        sh("git", "commit", "-q", "--allow-empty", "-m", "by claude", cwd=self.src, env=claude)
+        self.reclone()
+        self.bundle.unlink()
+        sh("git", "-C", str(self.work), "bundle", "create", "-q", str(self.bundle), "--all")
+        (self.t / "m.json").write_text("{}")
+
+    def test_author_replaces_claude_identity_and_verify_passes(self):
+        self.claude_commit()
+        self.hist("apply", "--messages", str(self.t / "m.json"), "--author", "Dana Lee <dana@example.com>")
+        idents = sh("git", "-C", str(self.work), "log", "--all", "--format=%an <%ae>|%cn <%ce>").stdout
+        self.assertNotIn("Claude", idents)
+        self.assertIn("Dana Lee <dana@example.com>|Dana Lee <dana@example.com>", idents)
+        self.assertEqual(self.hist("verify", "--bundle", str(self.bundle), check=False).returncode, 0)
+
+    def test_without_author_claude_identity_stays(self):
+        self.claude_commit()
+        self.hist("apply", "--messages", str(self.t / "m.json"))
+        self.assertIn("Claude <noreply@anthropic.com>", sh("git", "-C", str(self.work), "log", "--all", "--format=%an <%ae>").stdout)
+        self.assertEqual(self.hist("verify", "--bundle", str(self.bundle), check=False).returncode, 0)
+
+    def test_author_refuses_claude_or_bad_identity(self):
+        self.claude_commit()
+        for bad in ("Claude <x@example.com>", "Dana <x@anthropic.com>", "dana"):
+            r = self.hist("apply", "--messages", str(self.t / "m.json"), "--author", bad, check=False)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("--author must", r.stderr)
+
+    def test_verify_catches_author_changed_beyond_claude(self):
+        self.claude_commit()
+        self.hist("apply", "--messages", str(self.t / "m.json"), "--author", "Dana <dana@example.com>")
+        # Pretend the rewrite also changed a human's commit: verify must notice.
+        st = self.work / ".git" / "felix-git.json"
+        d = json.loads(st.read_text()); d["owner"] = ["Someone", "s@example.com"]; st.write_text(json.dumps(d))
+        self.assertNotEqual(self.hist("verify", "--bundle", str(self.bundle), check=False).returncode, 0)
+
     def test_branch_named_head_is_rewritten(self):
         self.g("branch", "topic/HEAD", "main")
         self.reclone()

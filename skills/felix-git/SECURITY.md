@@ -24,6 +24,7 @@ The skill reads repositories it doesn't trust and can rewrite shared history, so
 | Unrestorable mistake | Git bundle before any change, kept after publishing | `test_restore_from_bundle_all_branches` |
 | A product capture shows the owner's real data (the app calls its hardcoded local backend, which may be live) | promotion.md: route every page request to a demo stub and abort other hosts before the first frame; check every frame | Instruction review |
 | A generated image passes as proof of the product | promotion.md: generated art is decoration only, never the product's screens, people or other logos; prompts and tool listed in the review | Instruction review |
+| Re-attribution changes more than Claude's own commits | `apply --author` maps only a `Claude` name or an `@anthropic.com` address, refuses an identity that is itself Claude's, and `verify` accepts exactly that change | `test_author_replaces_claude_identity_and_verify_passes`, `test_verify_catches_author_changed_beyond_claude`, `test_author_refuses_claude_or_bad_identity` |
 | A merge reports a PR live that was merged at an older head | SKILL.md phase 8: check `headRefOid` and `mergedAt` before claiming it, then a follow-up PR | Instruction review |
 
 Bandit reports `subprocess` use as low severity by design: all calls use argument lists with no shell, and the only dynamic code is filter-repo's callback, built from a fixed string with the table path passed through `repr`.
