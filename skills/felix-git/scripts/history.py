@@ -6,7 +6,7 @@ the owner approved says otherwise.
   history.py export <clone> --out commits.json [--scan scan.json]
                                                     commits to rename, with a diffstat of each; messages
                                                     the scan flagged come back withheld
-  history.py apply  <clone> --messages messages.json [--drop-attribution] [--purge purge.json]
+  history.py apply  <clone> --messages messages.json [--author "Name <email>"] [--keep-attribution] [--purge purge.json]
   history.py verify <clone> --bundle backup.bundle  compare rewritten commits with the originals
   history.py table  <clone> --commits commits.json --out old-to-new.md
   history.py push   <clone> [--yes] [--accept-findings]
@@ -16,7 +16,8 @@ the owner approved says otherwise.
 messages.json maps an old full SHA to its new message. Commits not listed keep their message.
 purge.json removes data in the same pass: {"paths": ["dir/", "file"], "blobs": ["<full id>"],
 "replace": [{"old": "text", "new": "text"}]}. Replacements are literal and also apply to messages.
-Trailers such as Co-authored-by are carried over unless --drop-attribution is given.
+Trailers such as Co-authored-by are carried over, except Claude attribution lines, which are dropped unless
+--keep-attribution is given. --author re-attributes commits Claude made under its own identity to the user.
 Work in a fresh clone: filter-repo removes origin, so apply records it in .git/felix-git.json,
 with any credential stripped from the URL. Pushing then uses the normal git credential helper.
 """
@@ -32,6 +33,24 @@ CONVENTIONAL = re.compile(r"^(feat|fix|refactor|docs|chore|test|perf|build|ci|st
 # What may carry over: the shapes tools really write, so an injected sentence in one of these keys stays behind.
 KEEP_ATTR = re.compile(r"^(Claude-Session: (https?://[^\s@]+|[\w-]+)|🤖? *Generated with \[?Claude Code\]?(\(https?://[^\s@)]+\))?)$", re.I)
 ATTR = re.compile(r"^(Co-Authored-By: *Claude.*|Claude-Session: .*|🤖? *Generated with \[?Claude.*)$", re.I)
+# Commits Claude Code made under its own identity rather than the user's.
+AI_NAME = re.compile(r"^claude$", re.I)
+AI_EMAIL = re.compile(r"@anthropic\.com$", re.I)
+IDENT = re.compile(r"^([^<>\n]+?) <([^<>\s]+@[^<>\s]+)>$")
+
+
+def is_ai(name, email):
+    return bool(AI_NAME.match(name.strip()) or AI_EMAIL.search(email.strip()))
+
+
+def expected_identity(fields, owner):
+    """fields: author name, email, date, committer name, email, date. Claude's identity becomes the owner's."""
+    f = list(fields)
+    if owner:
+        for i in (0, 3):
+            if is_ai(f[i], f[i + 1]):
+                f[i], f[i + 1] = owner
+    return f
 
 
 def git(repo, *args, check=True):
@@ -310,8 +329,15 @@ def cmd_apply(a):
                      and any(o.startswith(h) for h in re.findall(r"\b[0-9a-f]{7,40}\b", m) for o in originals))
     if quoting:
         sys.exit(f"these new messages quote a commit hash, which the rewrite changes; say it in words: {quoting[:5]}")
-    resolved = {s: final_message(originals[s], mapping.get(s, originals[s]), a.drop_attribution)
-                if s in mapping or (a.drop_attribution and any(ATTR.match(l) for l in originals[s].splitlines()))
+    drop = not a.keep_attribution
+    owner = None
+    if a.author:
+        m = IDENT.match(a.author.strip())
+        if not m or is_ai(*m.groups()):
+            sys.exit('--author must look like "Name <email>" and name the user, not Claude. Nothing was rewritten.')
+        owner = list(m.groups())
+    resolved = {s: final_message(originals[s], mapping.get(s, originals[s]), drop)
+                if s in mapping or (drop and any(ATTR.match(l) for l in originals[s].splitlines()))
                 else None for s in originals}
     if purge:
         # filter-repo replaces text in messages before the callback swaps in these, so they need it here too.
@@ -327,13 +353,25 @@ def cmd_apply(a):
         "if m is not None:\n"
         "    commit.message = m.encode('utf-8', 'surrogateescape')\n"
     )
+    if owner:
+        # Claude's own identity on a commit becomes the user's, for author and committer alike.
+        callback += (
+            "import re\n"
+            f"owner = ({owner[0].encode()!r}, {owner[1].encode()!r})\n"
+            "ai = lambda n, e: re.match(rb'(?i)claude$', n.strip()) or re.search(rb'(?i)@anthropic\\.com$', e.strip())\n"
+            "if ai(commit.author_name, commit.author_email):\n"
+            "    commit.author_name, commit.author_email = owner\n"
+            "if ai(commit.committer_name, commit.committer_email):\n"
+            "    commit.committer_name, commit.committer_email = owner\n"
+        )
     # The commit each ref holds, peeled through annotated tags, so push can check it against the map.
     tips = {ref: git(a.repo, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}", check=False) for ref in refs}
     if purge and not all(tips.values()):
         # filter-repo leaves a tag on a blob or tree alone, so it would keep purged data public.
         sys.exit(f"these refs point at no commit, so a purge can't reach them: {', '.join(r for r, t in tips.items() if not t)}. "
                  "Nothing was rewritten.")
-    before = {"origin": strip_credentials(origin), "refs": refs, "tips": tips, "commits": list(originals), "purge": purge}
+    before = {"origin": strip_credentials(origin), "refs": refs, "tips": tips, "commits": list(originals), "purge": purge,
+              "owner": owner}
     state_path(a.repo).write_text(json.dumps(before))
     r = subprocess.run(["git", "filter-repo", "--commit-callback", callback, *(purge_args(a.repo, purge) if purge else [])],
                        cwd=a.repo, capture_output=True, text=True, errors="replace")
@@ -386,12 +424,16 @@ def cmd_verify(a):
     fmt = "%T%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI"
     fail, checked, renamed = [], 0, 0
     cmap = commit_map(a.repo)
-    purge = json.loads(state_path(a.repo).read_text()).get("purge") if state_path(a.repo).exists() else None
+    st = json.loads(state_path(a.repo).read_text()) if state_path(a.repo).exists() else {}
+    purge, owner = st.get("purge"), st.get("owner")
     seen, matched = {}, set()
     for old, new in cmap.items():
         checked += 1
         o = git(str(tmp), "log", "-1", f"--format={fmt}", old, check=False)
         n = git(a.repo, "log", "-1", f"--format={fmt}", new, check=False)
+        if o and owner:
+            parts = o.split("\0")
+            o = "\0".join(parts[:1] + expected_identity(parts[1:], owner))
         if purge and o and n:
             if o.split("\0")[1:] != n.split("\0")[1:]:
                 fail.append({"old": old, "new": new, "why": "author or date differs"})
@@ -555,7 +597,10 @@ def main():
     o = sub.add_parser("origin"); o.add_argument("repo"); o.set_defaults(fn=cmd_origin)
     e = sub.add_parser("export"); e.add_argument("repo"); e.add_argument("--out", required=True); e.add_argument("--scan"); e.set_defaults(fn=cmd_export)
     x = sub.add_parser("apply"); x.add_argument("repo"); x.add_argument("--messages", required=True)
-    x.add_argument("--drop-attribution", action="store_true"); x.add_argument("--purge"); x.set_defaults(fn=cmd_apply)
+    x.add_argument("--keep-attribution", action="store_true", help="keep Claude attribution trailers (dropped by default)")
+    x.add_argument("--drop-attribution", action="store_true", help=argparse.SUPPRESS)  # the default now; kept for old command lines
+    x.add_argument("--author", help='"Name <email>" that replaces Claude\'s own identity on commits')
+    x.add_argument("--purge"); x.set_defaults(fn=cmd_apply)
     v = sub.add_parser("verify"); v.add_argument("repo"); v.add_argument("--bundle", required=True); v.set_defaults(fn=cmd_verify)
     t = sub.add_parser("table"); t.add_argument("repo"); t.add_argument("--commits", required=True); t.add_argument("--out", required=True); t.set_defaults(fn=cmd_table)
     u = sub.add_parser("push"); u.add_argument("repo"); u.add_argument("--yes", action="store_true"); u.add_argument("--accept-findings", action="store_true"); u.set_defaults(fn=cmd_push)

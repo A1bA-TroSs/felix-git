@@ -7,6 +7,7 @@ Installs nothing and changes nothing. Exit 0 when everything required for a full
 run (including publishing) is ready, 1 otherwise. Optional tools only add features.
 """
 import json
+import os
 import platform
 import re
 import shutil
@@ -98,6 +99,18 @@ def checks():
         "set" if code == 0 and name_code == 0 else "user.name or user.email unset",
         'git config --global user.name "Your Name" && git config --global user.email "<id>+<login>@users.noreply.github.com"')
 
+    # Claude Code adds "Co-Authored-By: Claude" and "Generated with Claude Code" unless this is off.
+    settings = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+    try:
+        conf = json.loads(settings.read_text()) if settings.exists() else {}
+    except (OSError, ValueError):
+        conf = {}
+    attr = conf.get("attribution") if isinstance(conf.get("attribution"), dict) else {}
+    off = (attr.get("commit") == "" and attr.get("pr") == "") or (not attr and conf.get("includeCoAuthoredBy") is False)
+    add("Claude attribution", off, "recommended: commits read as yours",
+        "off" if off else "on: new commits and PRs get Claude attribution lines",
+        f'set "attribution": {{"commit": "", "pr": ""}} in {settings}')
+
     has_gh = bool(shutil.which("gh"))
     add("gh", has_gh, "recommended", "found" if has_gh else "not found: no PRs, metadata or GitHub audit", fix("gh", kind))
     if has_gh:
@@ -151,7 +164,7 @@ def main():
         print(json.dumps({"os": kind, "ready": ready, "checks": out}, indent=2))
     else:
         for c in out:
-            print(f"{'ok  ' if c['ok'] else 'MISS'}  {c['name']:<16} {c['need']:<44} {c['detail']}")
+            print(f"{'ok  ' if c['ok'] else 'MISS'}  {c['name']:<18} {c['need']:<44} {c['detail']}")
             if c["fix"]:
                 print(f"      fix: {c['fix']}")
         print("\nready for a full run" if ready else "\nnot ready: fix the required items above")
