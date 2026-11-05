@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-05
+
+### Added
+
+- `render.py --transparent`, for banners that sit on GitHub's own background.
+
+### Changed
+
+- The README guide now covers banner edges (floating, matched or framed) and requires each banner to come from the project's own logo, colours and captures, so cleaned repos don't share one look.
+- felix-git's own banner is transparent, in light and dark variants.
+
 ## [1.3.0] - 2026-11-05
 
 ### Added
@@ -39,7 +50,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `release.py`: the SemVer bump and a changelog section from the commits since the last tag.
 - `animate.py`: an animated WebP hero from captured frames.
 
-[Unreleased]: https://github.com/A1bA-TroSs/felix-git/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/A1bA-TroSs/felix-git/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/A1bA-TroSs/felix-git/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/A1bA-TroSs/felix-git/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/A1bA-TroSs/felix-git/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/A1bA-TroSs/felix-git/compare/v1.0.0...v1.1.0
