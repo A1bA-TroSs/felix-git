@@ -26,7 +26,7 @@ or "my repo is a mess", "make the README sell this project", "fix the commits an
 
 ## What it does
 
-- **Commit history.** Rewrites vague messages ("fix", "v1.2", "update") into Conventional Commits written from each commit's real diff. Code, authors, dates and parents stay exactly as they were, and a check against a backup bundle proves it before anything is pushed.
+- **Commit history.** Rewrites vague messages ("fixed", "v1.25", "update") into Conventional Commits written from each commit's real diff. It then gives a straight-line history structure: each run of commits that built one feature goes behind a merge commit on `develop`, and versions named only in old messages become tags and release merges on `main`. Every commit keeps its code, author, date and message, and a check against a backup bundle proves it before anything is pushed.
 - **Personal data.** On request, removes files, image versions and strings (addresses, names) from all of history in the same pass, and checks that nothing else changed.
 - **Branches.** Sets up git-flow for versioned software: `main` for releases, `develop` for integration, and one `feature/*`, `fix/*`, `docs/*` or `chore/*` branch per change, each merged into `develop` with a merge commit so the graph shows every feature. Projects that deploy from `main` get short branches into `main` instead. It lists merged and agent-session branches for deletion and shows the result as a tree before you approve it.
 - **Releases.** `release.py` reads the Conventional Commits since the last tag, picks the SemVer bump and drafts a Keep a Changelog section. A release goes through `release/x.y.z` with the version bump and `CHANGELOG.md`, is merged into `main`, tagged, published as a GitHub Release and merged back into `develop`.
@@ -91,8 +91,8 @@ Linux and Windows work too; `doctor.py` prints the matching `apt`, `dnf` or `win
 python3 -m unittest tests.test_scripts
 ```
 
-121 tests. CI runs them on Ubuntu with the same tools.
+126 tests. CI runs them on Ubuntu with the same tools.
 
 ## License
 
-No license yet, all rights reserved.
+[MIT](LICENSE)

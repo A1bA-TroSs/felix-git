@@ -1318,5 +1318,103 @@ class Release(unittest.TestCase):
         self.assertNotIn("explain setup", d["changelog"])
 
 
+class Structure(unittest.TestCase):
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.t, ignore_errors=True)
+        src = self.t / "src"
+        sh("git", "init", "-q", "-b", "main", str(src))
+        self.shas = {}
+        for i, name in enumerate(["root", "a", "b", "c", "d", "e", "f"]):
+            (src / f"{name}.txt").write_text(name)
+            sh("git", "add", ".", cwd=src)
+            msg = {"d": "Fools v1.0"}.get(name, "fixed")
+            sh("git", "commit", "-qm", msg, cwd=src, env=dict(ENV, GIT_AUTHOR_DATE=f"2026-01-0{i+1}T10:00:00", GIT_COMMITTER_DATE=f"2026-01-0{i+1}T10:00:00"))
+            self.shas[name] = sh("git", "rev-parse", "HEAD", cwd=src).stdout.strip()
+            if name == "d":
+                sh("git", "branch", "-f", "release-point", "HEAD", cwd=src)
+        sh("git", "checkout", "-qb", "develop", cwd=src)
+        sh("git", "branch", "-f", "main", self.shas["d"], cwd=src)
+        sh("git", "branch", "-D", "release-point", cwd=src)
+        self.remote = self.t / "r.git"
+        sh("git", "clone", "-q", "--bare", str(src), str(self.remote))
+        self.work = self.t / "work"
+        sh("git", "clone", "-q", f"file://{self.remote}", str(self.work))
+        self.bundle = self.t / "b.bundle"
+        sh("git", "-C", str(self.work), "bundle", "create", "-q", str(self.bundle), "--all")
+        (self.t / "m.json").write_text(json.dumps({self.shas["a"]: "feat(x): add a", self.shas["b"]: "feat(x): add b",
+                                                   self.shas["c"]: "fix(y): add c", self.shas["d"]: "feat: add d"}))
+        self.hist("apply", "--messages", str(self.t / "m.json"))
+        s_ = self.shas
+        self.plan = {"branch": "develop", "main": "main",
+                     "groups": [{"name": "feature/x", "commits": [s_["a"], s_["b"]]}, {"name": "fix/y", "commits": [s_["c"]]},
+                                {"name": "feature/z", "commits": [s_["e"], s_["f"]]}],
+                     "releases": [{"commit": s_["d"], "version": "1.0.0"}]}
+
+    def hist(self, *a, check=True):
+        return sh(sys.executable, str(S / "history.py"), a[0], str(self.work), *a[1:], check=check)
+
+    def structure(self, plan=None):
+        (self.t / "s.json").write_text(json.dumps(plan or self.plan))
+        return self.hist("structure", "--plan", str(self.t / "s.json"), check=False)
+
+    def log(self, *a):
+        return sh("git", "-C", str(self.work), "log", *a).stdout
+
+    def test_groups_become_merges_and_main_becomes_releases(self):
+        r = self.structure()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        line = self.log("--first-parent", "--format=%s", "develop").splitlines()
+        self.assertEqual(line, ["Merge branch 'feature/z' into develop", "feat: add d", "Merge branch 'fix/y' into develop",
+                                "Merge branch 'feature/x' into develop", "fixed"])
+        self.assertEqual(self.log("--first-parent", "--format=%s", "main").splitlines(), ["Merge branch 'release/1.0.0'", "fixed"])
+        self.assertEqual(sh("git", "-C", str(self.work), "describe", "--tags", "main").stdout.strip(), "v1.0.0")
+        self.assertEqual(sh("git", "-C", str(self.work), "rev-parse", "develop^{tree}").stdout,
+                         sh("git", "-C", str(self.bundle.parent / "src"), "rev-parse", "develop^{tree}").stdout)
+        v = self.hist("verify", "--bundle", str(self.bundle), check=False)
+        self.assertEqual(v.returncode, 0, v.stdout)
+
+    def test_feature_merge_keeps_last_commit_identity_and_date(self):
+        self.structure()
+        merge = self.log("-1", "--format=%cI|%aI|%an", "develop").strip()
+        last = self.log("-1", "--format=%cI|%aI|%an", "develop^2").strip()
+        self.assertEqual(merge.split("|")[0], last.split("|")[0])
+
+    def test_bad_plans_refused(self):
+        s_ = self.shas
+        bad = [{"branch": "develop", "groups": [{"name": "feature/x", "commits": [s_["a"], s_["c"]]}]},
+               {"branch": "develop", "groups": [{"name": "Feature X", "commits": [s_["a"]]}]},
+               {"branch": "develop", "groups": [{"name": "feature/x", "commits": [s_["root"]]}]},
+               {"branch": "develop", "releases": [{"commit": s_["e"], "version": "2.0.0"}, {"commit": s_["d"], "version": "1.0.0"}]},
+               {"branch": "develop", "releases": [{"commit": s_["d"], "version": "v1"}]},
+               {"branch": "nope", "groups": []}, {"branch": "develop", "extra": 1}]
+        for plan in bad:
+            r = self.structure(plan)
+            self.assertNotEqual(r.returncode, 0, plan)
+        self.assertEqual(self.structure().returncode, 0)
+        self.assertNotEqual(self.structure().returncode, 0)  # a second run is refused
+
+    def test_verify_catches_a_merge_with_another_tree(self):
+        self.structure()
+        st = self.work / ".git" / "felix-git-structure.json"
+        d = json.loads(st.read_text())
+        d["merges"][0]["last"] = d["merges"][1]["last"]
+        st.write_text(json.dumps(d))
+        self.assertNotEqual(self.hist("verify", "--bundle", str(self.bundle), check=False).returncode, 0)
+
+    @needs_scanner
+    def test_push_sends_branches_and_new_tag(self):
+        self.structure()
+        self.assertEqual(self.hist("verify", "--bundle", str(self.bundle), check=False).returncode, 0)
+        plan = json.loads(self.hist("push").stdout.split("\ndry run")[0])
+        self.assertIn("refs/tags/v1.0.0", [u["ref"] for u in plan["updates"]])
+        r = self.hist("push", "--yes", check=False)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        remote = sh("git", "-C", str(self.remote), "for-each-ref", "--format=%(refname)").stdout
+        self.assertIn("refs/tags/v1.0.0", remote)
+        self.assertEqual(sh("git", "-C", str(self.remote), "rev-parse", "develop").stdout,
+                         sh("git", "-C", str(self.work), "rev-parse", "develop").stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
