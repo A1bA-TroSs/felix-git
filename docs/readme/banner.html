@@ -1,12 +1,30 @@
 <!doctype html><html><head><meta charset="utf-8"><style>
 *{box-sizing:border-box}
-html,body{margin:0;width:1280px;height:320px;overflow:hidden}
-body{position:relative;background:#0F172A url(banner-art.png) right center/auto 100% no-repeat;color:#F1F5F9;font-family:-apple-system,"SF Pro Display","Helvetica Neue",Arial,sans-serif}
-.t{position:absolute;left:72px;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center}
-h1{margin:0;font-size:78px;line-height:1;letter-spacing:-2.5px;font-weight:800}
-h1 span{color:#34D399}
-p{margin:16px 0 0;font-size:24px;color:#CBD5E1;letter-spacing:-.2px}
-p b{color:#F59E0B;font-weight:700}
+html,body{margin:0;width:1280px;height:320px;overflow:hidden;background:transparent}
+body{position:relative;font-family:-apple-system,"SF Pro Display","Helvetica Neue",Arial,sans-serif;--fg:#0F172A;--sub:#475569;--hl:#B45309;--a:#059669;--b:#D97706;--c:#0284C7}
+[data-theme=dark] body{--fg:#F1F5F9;--sub:#94A3B8;--hl:#F59E0B;--a:#34D399;--b:#F59E0B;--c:#7DD3FC}
+.t{position:absolute;left:56px;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center}
+h1{margin:0;font-size:78px;line-height:1;letter-spacing:-2.5px;font-weight:800;color:var(--fg)}
+h1 span{color:var(--a)}
+p{margin:16px 0 0;font-size:24px;color:var(--sub);letter-spacing:-.2px}
+p b{color:var(--hl);font-weight:700}
+svg{position:absolute;right:0;top:0}
 </style></head><body>
 <div class="t"><h1>felix<span>-git</span></h1><p>Messy history in, <b>clean commits, branches and README</b> out.</p></div>
+<svg width="470" height="320" viewBox="0 0 560 320" preserveAspectRatio="xMaxYMid meet">
+<defs>
+<linearGradient id="fade" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".22" stop-color="#fff" stop-opacity="1"/><stop offset=".88" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<mask id="m"><rect width="560" height="320" fill="url(#fade)"/></mask>
+</defs>
+<g mask="url(#m)" fill="none" stroke-width="3.2" stroke-linecap="round">
+<path stroke="var(--a)" d="M20 110 C80 60,110 250,170 230 S240 60,300 120 S340 160,380 160 S400 120,430 120 L560 120"/>
+<path stroke="var(--b)" d="M20 150 C70 200,120 90,170 120 S250 230,300 200 S340 160,380 160 L560 160"/>
+<path stroke="var(--c)" d="M20 230 C90 250,120 150,180 170 S250 90,300 140 S350 160,380 160 S400 200,430 200 L560 200"/>
+</g>
+<g mask="url(#m)">
+<g fill="var(--a)"><circle cx="455" cy="120" r="6.5"/><circle cx="505" cy="120" r="6.5"/></g>
+<g fill="var(--b)"><circle cx="455" cy="160" r="6.5"/><circle cx="505" cy="160" r="6.5"/></g>
+<g fill="var(--c)"><circle cx="455" cy="200" r="6.5"/><circle cx="505" cy="200" r="6.5"/></g>
+</g>
+</svg>
 </body></html>

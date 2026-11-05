@@ -38,12 +38,20 @@ Copy the shape of a page whose reader matches, not its look. Observed in well-kn
 <h1>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/readme/banner-dark.png">
-    <img alt="Project Name" src="docs/readme/banner.png" width="100%">
+    <img alt="Project Name" src="docs/readme/banner-light.png" width="100%">
   </picture>
 </h1>
 ```
 
-A banner is 1280x320 at 2x: the existing logo, the name, one line of value, and on the right a cropped, faded piece of the real hero capture or generated artwork (section 4). Keep the text on the left half and check that it never overlaps the image. The one-line description and the link row go straight below it.
+A banner is 1280x320 at 2x: the existing logo or the name, one line of value, and a visual from the project itself. The one-line description and the link row go straight below it.
+
+**Edges.** A filled rectangle shows its border against GitHub's background (#ffffff in light mode, #0d1117 in dark), and in one of the two themes it reads as a pasted box. Pick one treatment and say which in the review:
+- *Floating*: leave the background transparent (`render.py --transparent`, nothing painted on `html` or `body`) and render a light and a dark variant, so the banner sits on the page itself. Biome, uv, Turborepo, Excalidraw and Hoppscotch do this with `<picture>` variants.
+- *Matched*: paint each variant exactly #ffffff or #0d1117, so the edge disappears in its own theme. This works when the art needs a solid ground.
+- *Framed on purpose*: a full-bleed artwork with rounded corners and margin around it, as AFFiNE and Jan do. Choose this only when the artwork carries the page.
+- Fade art into the background with a mask or gradient instead of cropping it at a hard line. Check both variants composited on #ffffff and #0d1117 before using them.
+
+**No house style.** Every repo this skill touches must not come out looking the same, or the result becomes one more template people learn to skip. Derive the banner from the project: its own logo, its app's real colours (read the stylesheet or theme tokens), its domain's imagery, its real screenshot. Vary the composition (left-aligned, centred, wordmark only, capture-led, illustration-led) and the type to fit it. Never reuse felix-git's own banner: three git lines merging, a dark navy ground, green and amber. If two candidates are possible, render both and let the owner pick at the review.
 
 Default order for an unknown project: banner (or name), one-line category and value, a link row of in-page anchors when there is no website or docs, hero image, 3 buy factors with proof, quick start, how it works, status and limits, contributing, license. Lists and images are common in popular READMEs and studies link usage, install, license and image sections to more stars, but that is correlation, so use them for clarity, not as a formula. Badges only when they report something true and live, such as CI status or a release; a badge wall adds nothing.
 
@@ -96,7 +104,7 @@ Run `scripts/check_readme.py <repo> --claims claims.json` and fix every failure.
 
 ## Sources behind this guide
 
-- Title banners: https://github.com/toeverything/AFFiNE , https://github.com/janhq/jan , https://github.com/tauri-apps/tauri , https://github.com/supabase/supabase , https://github.com/hoppscotch/hoppscotch
+- Title banners and edge treatments: https://github.com/biomejs/biome , https://github.com/astral-sh/uv , https://github.com/vercel/turborepo , https://github.com/excalidraw/excalidraw , https://github.com/toeverything/AFFiNE , https://github.com/janhq/jan , https://github.com/tauri-apps/tauri , https://github.com/supabase/supabase , https://github.com/hoppscotch/hoppscotch
 - Page shapes: https://github.com/astral-sh/uv , https://github.com/immich-app/immich , https://github.com/excalidraw/excalidraw , https://github.com/localsend/localsend , https://github.com/ollama/ollama , https://github.com/shadcn-ui/ui , https://github.com/rustdesk/rustdesk , https://github.com/obra/superpowers
 - Dunford's positioning order: https://businessofsoftware.org/events/bos-europe-2026/differentiated-value-the-hardest-and-most-important-problem-in-positioning
 - README content and popularity (correlation): https://arxiv.org/abs/2206.10772 and https://enoei.github.io/papers/liu2022readme.pdf
