@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-05
+
+### Changed
+
+- Claude attribution is off by default: `apply` drops Claude's co-author, session and "Generated with" lines unless `--keep-attribution` is given.
+
+### Added
+
+- `apply --author` re-attributes commits Claude Code made under its own identity to the user, and `verify` accepts exactly that change.
+- `doctor.py` checks Claude Code's attribution setting, `/felix-git:setup` offers to turn it off, and a cleanup writes `.claude/settings.json` and a `CLAUDE.md` rule so later sessions add none.
+
 ## [1.0.0] - 2026-11-05
 
 ### Added
@@ -14,5 +25,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - `release.py`: the SemVer bump and a changelog section from the commits since the last tag.
 - `animate.py`: an animated WebP hero from captured frames.
 
-[Unreleased]: https://github.com/A1bA-TroSs/felix-git/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/A1bA-TroSs/felix-git/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/A1bA-TroSs/felix-git/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/A1bA-TroSs/felix-git/releases/tag/v1.0.0
