@@ -53,9 +53,9 @@ Open every entry in `image_blobs`, which lists each distinct version of each ima
 
 A real secret stops the promotion work: it needs rotating first, and rewriting alone doesn't fix it because forks and caches keep it. Promoting a repo sends readers into its history, so private notes, personal addresses and large junk matter too. Put all of it at the top of the review. Message rewriting doesn't remove file contents, so don't imply it did. Recommend a purge in the review when real personal data or a credential is in history, and run one only if the user asked for it. Then write `purge.json` (`paths`, `blobs`, literal `replace` rules; `history.py` shows the format), pass it to `apply` with `--purge`, and let `verify` confirm nothing else changed. One pass does both jobs. Commits stay one for one, even ones left empty. Tell the user that GitHub keeps old commits under pull refs and caches, so closing PRs and a GitHub Support request come after publishing, and that the data must be treated as already public. In phase 4, after `apply`, untrack still-tracked junk on the cleanup branch and add it to `.gitignore`; committing before `apply` makes filter-repo refuse the clone.
 
-## Phase 3: Commit messages
+## Phase 3: Commit messages and structure
 
-Rewriting messages only: every commit keeps its code, author, dates and parents. That is the point. The history still shows what really happened, in the order it happened, and any commit still holds exactly what it held. Don't squash, regroup or reorder commits, even if asked casually; explain that regrouping creates commits that never existed and were never tested, and do it only if the user insists after hearing that.
+The goal is a history a stranger can read: what each commit did, which commits made up one feature, and where each version was released. Every commit keeps its code, author, dates and order, so the history still shows what really happened and any commit still holds exactly what it held. Messages are rewritten (steps 1 to 5), runs of commits that built one feature are grouped behind a merge commit, and versions named only in old messages become tags and releases (step 6). Never squash or reorder commits, even if asked casually: that creates commits that never existed and were never tested. Do it only if the user insists after hearing that.
 
 1. `scripts/history.py export work --scan scan.json --out commits.json`. A message the scan flagged comes back withheld, so a secret doesn't spread into your files; write its replacement from the diff.
 2. For each non-merge commit, read its real diff (`git show <sha>`) and write the message. Don't work from the old message or the stat alone. For a huge commit, read a filtered diff (definitions, routes, config, docs), and say in the review which commits you read that way.
@@ -89,9 +89,14 @@ Then:
 
 3. Scan what you wrote, because a message drawn from a diff can quote a secret: `scripts/scan.py work --also messages.json --out scan-messages.json`, and read the result before applying. Fix any `new_file_secrets` first. A `message_secrets` hit in an old message stays in history unless you replace that message, so replace it.
 4. `scripts/history.py apply work --messages messages.json --author "<owner identity>"`
-5. `scripts/history.py verify work --bundle backup.bundle`. Any failure means stop and report: never publish over a failed check. "messages_changed" can exceed what you wrote, because filter-repo also updates old hashes quoted in messages.
+5. `scripts/history.py verify work --bundle backup.bundle`. Run it again after step 6. Any failure means stop and report: never publish over a failed check. "messages_changed" can exceed what you wrote, because filter-repo also updates old hashes quoted in messages.
 
-6. `scripts/history.py table work --commits commits.json --out old-to-new.md`, for the review.
+6. Structure, by default (`references/workflow.md` section 8); skip it only if the user asked for messages alone. From `commits.json` (`parents`, dates, your new messages) write `structure.json` with original SHAs:
+   - `branch`: the integration branch. `groups`: each run of consecutive commits on its first-parent line that built one thing becomes `{"name": "feature/<words>", "commits": [...]}`, named by type like a branch would be. Group by what the diffs did, not by date alone. A lone commit can stay ungrouped; existing merges stay as they are.
+   - `releases`: commits whose old message named a version (`version_hint`), oldest first with rising SemVer. Use `manifest_versions` when the manifest at that commit agrees. When they disagree, or a hint is ambiguous ("v1.25" between 1.2 and 1.2.6 reads as 1.2.5), pick the reading the order supports and list each as an inference in the review.
+   - `main`: the default branch, when it lags the integration branch. Versions main already held become release merges there, each tagged. Later ones are tagged on the integration line only.
+   Then `scripts/history.py structure work --plan structure.json`, then verify again. verify checks that every commit kept its tree, identity, dates and message, that each merge holds its last commit's tree and identity, that every branch's content is unchanged, and that no commit was dropped.
+7. `scripts/history.py table work --commits commits.json --out old-to-new.md`, for the review. Draft `CHANGELOG.md` from the new tags: `scripts/release.py work --since v<a> --to v<b> --current <a>` per pair, committed on `chore/changelog` in phase 6.
 
 ## Phase 4: Branches
 
