@@ -28,7 +28,8 @@ or "my repo is a mess", "make the README sell this project", "fix the commits an
 
 - **Commit history.** Rewrites vague messages ("fix", "v1.2", "update") into Conventional Commits written from each commit's real diff. Code, authors, dates and parents stay exactly as they were, and a check against a backup bundle proves it before anything is pushed.
 - **Personal data.** On request, removes files, image versions and strings (addresses, names) from all of history in the same pass, and checks that nothing else changed.
-- **Branches.** Sets up `main`, `develop` and `feature/*` (or short branches into `main` when `main` deploys a live site). It lists merged and agent-session branches for deletion and shows the result as a tree before you approve it.
+- **Branches.** Sets up git-flow for versioned software: `main` for releases, `develop` for integration, and one `feature/*`, `fix/*`, `docs/*` or `chore/*` branch per change, each merged into `develop` with a merge commit so the graph shows every feature. Projects that deploy from `main` get short branches into `main` instead. It lists merged and agent-session branches for deletion and shows the result as a tree before you approve it.
+- **Releases.** `release.py` reads the Conventional Commits since the last tag, picks the SemVer bump and drafts a Keep a Changelog section. A release goes through `release/x.y.z` with the version bump and `CHANGELOG.md`, is merged into `main`, tagged, published as a GitHub Release and merged back into `develop`.
 - **Scan.** Runs gitleaks over every ref and commit message, flags personal addresses, junk and large files, and opens every image version, since a scanner can't read an address inside a screenshot.
 - **README.** Researches what the project really does and why someone would choose it, then writes the page: a title banner, a real capture of the product (animated when the app can run, always with demo data), a social card, and claims that each point to evidence.
 - **Staying clean.** Adds a commit-msg hook, a PR template and a short git section for coding agents, where most new mess comes from.
@@ -89,7 +90,7 @@ Linux and Windows work too; `doctor.py` prints the matching `apt`, `dnf` or `win
 python3 -m unittest tests.test_scripts
 ```
 
-111 tests. CI runs them on Ubuntu with the same tools.
+116 tests. CI runs them on Ubuntu with the same tools.
 
 ## License
 
