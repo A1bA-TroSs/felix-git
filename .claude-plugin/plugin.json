@@ -8,5 +8,14 @@
   },
   "homepage": "https://github.com/A1bA-TroSs/felix-git",
   "repository": "https://github.com/A1bA-TroSs/felix-git",
-  "keywords": ["git", "github", "commits", "conventional-commits", "readme", "branches", "cleanup"]
+  "keywords": [
+    "git",
+    "github",
+    "commits",
+    "conventional-commits",
+    "readme",
+    "branches",
+    "cleanup"
+  ],
+  "license": "MIT"
 }
