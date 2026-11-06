@@ -45,13 +45,12 @@ CONVENTIONAL = re.compile(r"^(feat|fix|refactor|docs|chore|test|perf|build|ci|st
 KEEP_ATTR = re.compile(r"^(Claude-Session: (https?://[^\s@]+|[\w-]+)|🤖? *Generated with \[?Claude Code\]?(\(https?://[^\s@)]+\))?)$", re.I)
 ATTR = re.compile(r"^(Co-Authored-By: *Claude.*|Claude-Session: .*|🤖? *Generated with \[?Claude.*)$", re.I)
 # Commits Claude Code made under its own identity rather than the user's.
-AI_NAME = re.compile(r"^claude$", re.I)
-AI_EMAIL = re.compile(r"@anthropic\.com$", re.I)
+AI_IDENTITY = ("claude", "noreply@anthropic.com")
 IDENT = re.compile(r"^([^<>\n]+?) <([^<>\s]+@[^<>\s]+)>$")
 
 
 def is_ai(name, email):
-    return bool(AI_NAME.match(name.strip()) or AI_EMAIL.search(email.strip()))
+    return (name.strip().lower(), email.strip().lower()) == AI_IDENTITY
 
 
 def expected_identity(fields, owner):
@@ -93,6 +92,20 @@ def strip_credentials(url):
 
 def state_path(repo):
     return Path(git(repo, "rev-parse", "--absolute-git-dir")) / "felix-git.json"
+
+
+def origin_destination(repo, expected=None):
+    """Bind reads and writes to one reviewed destination, including Git URL rewrites."""
+    fetch = lines(git(repo, "remote", "get-url", "--all", "origin", check=False))
+    push = lines(git(repo, "remote", "get-url", "--push", "--all", "origin", check=False))
+    if not fetch and not push and expected is None:
+        return ""
+    if (len(fetch) != 1 or len(push) != 1
+            or strip_credentials(fetch[0]) != strip_credentials(push[0])
+            or (expected is not None and strip_credentials(push[0]) != expected)):
+        sys.exit("refused: origin destination differs from the reviewed destination or has multiple URLs. "
+                 "Use one matching fetch/push destination and review it before retrying.")
+    return strip_credentials(fetch[0])
 
 
 def trailers(message):
@@ -337,7 +350,9 @@ def cmd_apply(a):
     if problems:
         sys.exit("fix these messages, nothing was rewritten:\n" + "\n".join(problems))
     purge = load_purge(a.purge) if a.purge else None
-    origin = git(a.repo, "remote", "get-url", "origin", check=False)
+    origin = origin_destination(a.repo)
+    origin_raw = strip_credentials(git(a.repo, "config", "--get", "remote.origin.url", check=False))
+    push_raw = strip_credentials(git(a.repo, "config", "--get", "remote.origin.pushurl", check=False))
     refs = {}
     for line in lines(git(a.repo, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/origin", "refs/heads", "refs/tags")):
         sha, ref = line.split(" ", 1)
@@ -391,9 +406,8 @@ def cmd_apply(a):
     if owner:
         # Claude's own identity on a commit becomes the user's, for author and committer alike.
         callback += (
-            "import re\n"
             f"owner = ({owner[0].encode()!r}, {owner[1].encode()!r})\n"
-            "ai = lambda n, e: re.match(rb'(?i)claude$', n.strip()) or re.search(rb'(?i)@anthropic\\.com$', e.strip())\n"
+            "ai = lambda n, e: (n.strip().lower(), e.strip().lower()) == (b'claude', b'noreply@anthropic.com')\n"
             "if ai(commit.author_name, commit.author_email):\n"
             "    commit.author_name, commit.author_email = owner\n"
             "if ai(commit.committer_name, commit.committer_email):\n"
@@ -405,7 +419,8 @@ def cmd_apply(a):
         # filter-repo leaves a tag on a blob or tree alone, so it would keep purged data public.
         sys.exit(f"these refs point at no commit, so a purge can't reach them: {', '.join(r for r, t in tips.items() if not t)}. "
                  "Nothing was rewritten.")
-    before = {"origin": strip_credentials(origin), "refs": refs, "tips": tips, "commits": list(originals), "purge": purge,
+    before = {"origin": origin, "origin_raw": origin_raw, "push_raw": push_raw,
+              "refs": refs, "tips": tips, "commits": list(originals), "purge": purge,
               "owner": owner}
     state_path(a.repo).write_text(json.dumps(before))
     r = subprocess.run(["git", "filter-repo", "--commit-callback", callback, *(purge_args(a.repo, purge) if purge else [])],
@@ -789,6 +804,11 @@ def cmd_push(a):
         sys.exit("no origin recorded")
     if Path(st["origin"]).exists():
         sys.exit("origin is a folder on this machine, not a hosted remote, so there's nothing to publish to. Skip phase 8.")
+    if not git(a.repo, "remote", "get-url", "origin", check=False):
+        git(a.repo, "remote", "add", "origin", st.get("origin_raw", st["origin"]))
+        if st.get("push_raw"):
+            git(a.repo, "remote", "set-url", "--push", "origin", st["push_raw"])
+    origin_destination(a.repo, st["origin"])
     plan, kept = [], []
     for ref, old in st["refs"].items():
         if ref.startswith("refs/remotes/origin/"):
@@ -815,7 +835,7 @@ def cmd_push(a):
         print(f"warning: old history stays on the remote through: {', '.join(kept)}", file=sys.stderr)
     if not a.yes:
         print("dry run: nothing pushed")
-        r = subprocess.run(["git", "-C", a.repo, "ls-remote", st["origin"], "refs/heads/*", "refs/tags/*"], capture_output=True, text=True)
+        r = subprocess.run(["git", "-C", a.repo, "ls-remote", "origin", "refs/heads/*", "refs/tags/*"], capture_output=True, text=True)
         if r.returncode:
             print("warning: couldn't check whether the remote moved after the clone", file=sys.stderr)
             return
@@ -843,8 +863,7 @@ def cmd_push(a):
         sys.exit("refused: the secret scan couldn't run (is gitleaks installed?). Nothing goes public unscanned.")
     if scan.returncode and not a.accept_findings:
         sys.exit("refused: the scan found secrets. Pass --accept-findings only if the owner saw them in the review and still said yes.")
-    if not git(a.repo, "remote", "get-url", "origin", check=False):
-        git(a.repo, "remote", "add", "origin", st["origin"])
+    origin_destination(a.repo, st["origin"])
     remote = remote_refs(git(a.repo, "ls-remote", "origin", "refs/heads/*", "refs/tags/*"))
     changed = remote_changes(st, remote)
     if plan and all(remote.get(r) == n for r, _, n, _ in plan) and set(changed) == {r for r, *_ in plan}:
