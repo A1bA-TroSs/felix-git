@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- An evidence-first portfolio/README path with explicit feature status, real product captures and a claim ledger, without implicitly rewriting history.
+- Regression tests for changed push destinations, multiple push URLs, URL rewrite round-trips, ambiguous human identities and oversized UTF-16 files.
+
+### Fixed
+
+- History publication now binds the effective fetch and push destinations to the repository recorded before rewriting.
+- Re-attribution matches the known Claude bot name/email pair instead of a person's name or an entire email domain.
+- NUL-containing historical files above the fallback text limit now make the scan incomplete instead of silently passing as clean.
+
 ## [1.4.0] - 2026-11-05
 
 ### Added

@@ -171,6 +171,21 @@ def blobs(repo):
             yield path, int(parts[2]), oid
 
 
+def blob_prefix(repo, oid):
+    proc = subprocess.Popen(["git", "-C", repo, "cat-file", "blob", oid],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        data = proc.stdout.read(8000)
+        if len(data) < 8000 and proc.wait() != 0:
+            raise RuntimeError("couldn't inspect historical blob")
+        return data
+    finally:
+        proc.stdout.close()
+        if proc.poll() is None:
+            proc.terminate()
+        proc.wait()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("repo")
@@ -191,7 +206,7 @@ def main():
     image_paths = defaultdict(set)
     report = {"secrets": [], "secret_scan_ran": bool(shutil.which("gitleaks")), "new_file_secrets": [], "message_secrets": [], "also_missing": [],
               "emails": defaultdict(set), "emails_in_fixtures": defaultdict(set), "author_emails": set(),
-              "unread_archives": set(), "sensitive_files": set(), "junk_files": set(),
+              "unread_archives": set(), "unscanned_binary_text": set(), "sensitive_files": set(), "junk_files": set(),
               "large_files": {}, "images_to_view": set(), "images_only_in_history": set()}
     if report["secret_scan_ran"]:
         report["secrets"], err = scan_history(a.repo)
@@ -227,6 +242,11 @@ def main():
         if IMAGE.search(PurePosixPath(path).name):
             report["images_to_view" if path in current else "images_only_in_history"].add(path)
             image_paths[oid].add(path)
+        if size > TEXT_LIMIT:
+            prefix = blob_prefix(a.repo, oid)
+            if b"\0" in prefix and (not IMAGE.search(PurePosixPath(path).name)
+                                      or prefix.startswith((b"\xff\xfe", b"\xfe\xff"))):
+                report["unscanned_binary_text"].add(path)
         if (oid, path) not in seen and size <= TEXT_LIMIT:
             seen.add((oid, path))
             data = run("git", "-C", a.repo, "cat-file", "blob", oid).stdout
@@ -246,9 +266,12 @@ def main():
         if err:
             report["secret_scan_ran"] = False
             report["error"] = err
+    if report["unscanned_binary_text"]:
+        report["secret_scan_ran"] = False
+        report["error"] = "NUL-containing historical files exceed the 2 MiB text scan limit; review them separately."
     for key in ("emails", "emails_in_fixtures"):
         report[key] = {k: sorted(v)[:5] for k, v in report[key].items()}
-    for key in ("sensitive_files", "junk_files", "images_to_view", "images_only_in_history", "author_emails", "unread_archives"):
+    for key in ("sensitive_files", "junk_files", "images_to_view", "images_only_in_history", "author_emails", "unread_archives", "unscanned_binary_text"):
         report[key] = sorted(report[key])
     # A path says nothing about what it held earlier: each version can show something different.
     report["image_blobs"] = sorted(({"blob": oid, "paths": sorted(paths), "at_a_branch_tip": oid in tip_blobs}

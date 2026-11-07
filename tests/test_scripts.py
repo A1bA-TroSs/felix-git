@@ -62,6 +62,84 @@ class Base(unittest.TestCase):
 
 
 class History(Base):
+    @needs_scanner
+    def test_push_restores_raw_url_without_rewriting_it_twice(self):
+        source = "https://source.invalid/org/repo.git"
+        for explicit_push in (False, True):
+            with self.subTest(explicit_push=explicit_push):
+                self.reclone()
+                w = str(self.work)
+                sh("git", "-C", w, "remote", "set-url", "origin", source)
+                sh("git", "-C", w, "config", f"url.{self.url}.insteadOf", source)
+                sh("git", "-C", w, "config", "url.https://unused.invalid/repo.git.insteadOf", self.url)
+                if explicit_push:
+                    sh("git", "-C", w, "config", "url.https://unused.invalid/repo.git.pushInsteadOf", source)
+                    sh("git", "-C", w, "remote", "set-url", "--push", "origin", source)
+                self.rewrite()
+                self.hist("verify", "--bundle", str(self.bundle))
+                self.hist("push", "--yes", "--accept-findings")
+                self.assertEqual(sh("git", "-C", w, "config", "remote.origin.url").stdout.strip(), source)
+                if explicit_push:
+                    self.assertEqual(sh("git", "-C", w, "config", "remote.origin.pushurl").stdout.strip(), source)
+                self.assertEqual(sh("git", "-C", w, "remote", "get-url", "--push", "origin").stdout.strip(), self.url)
+                self.assertEqual(sh("git", "--git-dir", str(self.remote), "rev-parse", "main").stdout,
+                                 sh("git", "-C", w, "rev-parse", "main").stdout)
+
+    def test_push_refuses_push_url_rewrite_drift(self):
+        self.rewrite()
+        self.hist("verify", "--bundle", str(self.bundle))
+        w = str(self.work)
+        sh("git", "-C", w, "remote", "add", "origin", self.url)
+        sh("git", "-C", w, "config", "url.https://unused.invalid/repo.git.pushInsteadOf", self.url)
+        before = sh("git", "ls-remote", self.url).stdout
+        r = self.hist("push", "--yes", "--accept-findings", check=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("destination", r.stderr)
+        self.assertEqual(sh("git", "ls-remote", self.url).stdout, before)
+
+    @needs_scanner
+    def test_push_refuses_changed_destination(self):
+        other = self.t / "other.git"
+        sh("git", "clone", "-q", "--bare", self.url, str(other))
+        other_url = f"file://{other}"
+        self.rewrite()
+        self.hist("verify", "--bundle", str(self.bundle))
+        before = sh("git", "ls-remote", self.url).stdout
+        for fetch_url, push_url in ((other_url, None), (self.url, other_url)):
+            sh("git", "-C", str(self.work), "remote", "remove", "origin", check=False)
+            sh("git", "-C", str(self.work), "remote", "add", "origin", fetch_url)
+            if push_url:
+                sh("git", "-C", str(self.work), "remote", "set-url", "--add", "--push", "origin", push_url)
+            r = self.hist("push", "--yes", "--accept-findings", check=False)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("destination", r.stderr)
+            self.assertEqual(sh("git", "ls-remote", self.url).stdout, before)
+            self.assertEqual(sh("git", "ls-remote", other_url).stdout, before)
+
+    def test_apply_refuses_multiple_push_destinations(self):
+        sh("git", "-C", str(self.work), "remote", "set-url", "--add", "--push", "origin", self.url)
+        sh("git", "-C", str(self.work), "remote", "set-url", "--add", "--push", "origin", "file:///unused.git")
+        (self.t / "m.json").write_text("{}")
+        r = self.hist("apply", "--messages", str(self.t / "m.json"), check=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("destination", r.stderr)
+        self.assertFalse((self.work / ".git/felix-git.json").exists())
+
+    def test_author_preserves_ambiguous_human_identities(self):
+        for name, email in (("Claude", "claude@example.com"), ("Dana", "dana@anthropic.com")):
+            env = dict(ENV, GIT_AUTHOR_NAME=name, GIT_AUTHOR_EMAIL=email,
+                       GIT_COMMITTER_NAME=name, GIT_COMMITTER_EMAIL=email)
+            sh("git", "commit", "-q", "--allow-empty", "-m", "human contribution", cwd=self.src, env=env)
+        self.reclone()
+        self.bundle.unlink()
+        sh("git", "-C", str(self.work), "bundle", "create", "-q", str(self.bundle), "--all")
+        (self.t / "m.json").write_text("{}")
+        self.hist("apply", "--messages", str(self.t / "m.json"), "--author", "Owner <owner@example.com>")
+        identities = sh("git", "-C", str(self.work), "log", "--all", "--format=%an <%ae>|%cn <%ce>").stdout
+        self.assertIn("Claude <claude@example.com>|Claude <claude@example.com>", identities)
+        self.assertIn("Dana <dana@anthropic.com>|Dana <dana@anthropic.com>", identities)
+        self.hist("verify", "--bundle", str(self.bundle))
+
     def test_identity(self):
         rows = self.rewrite()
         out = json.loads(self.hist("verify", "--bundle", str(self.bundle)).stdout)
@@ -750,7 +828,7 @@ class History(Base):
 
     def test_author_refuses_claude_or_bad_identity(self):
         self.claude_commit()
-        for bad in ("Claude <x@example.com>", "Dana <x@anthropic.com>", "dana"):
+        for bad in ("Claude <noreply@anthropic.com>", " CLAUDE <NOREPLY@ANTHROPIC.COM>", "dana"):
             r = self.hist("apply", "--messages", str(self.t / "m.json"), "--author", bad, check=False)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("--author must", r.stderr)
@@ -825,6 +903,18 @@ class History(Base):
 
 @unittest.skipUnless(shutil.which("gitleaks"), "gitleaks not installed")
 class Scan(Base):
+    @needs_scanner
+    def test_oversized_utf16_is_incomplete_instead_of_clean(self):
+        fake = "ghp_" + "aB3dE6gH9jK2mN5pQ8sT1vW4yZ7cF0hJ3lP6"
+        (self.src / "large16.txt").write_bytes(("padding\n" * 150000 + f"token = {fake}\n").encode("utf-16"))
+        self.g("add", "."); self.g("commit", "-qm", "wide text")
+        r = self.scan(self.src)
+        self.assertEqual(r.returncode, 2)
+        report = json.loads(r.stdout)
+        self.assertFalse(report["secret_scan_ran"])
+        self.assertIn("large16.txt", report["unscanned_binary_text"])
+        self.assertNotIn(fake, r.stdout + r.stderr)
+
     def planted(self):
         (self.src / "cfg.py").write_text(f'AWS_KEY = "{FAKE_KEY}"\nowner = "real.person@gmail.com"\n')
         (self.src / ".DS_Store").write_text("x")
