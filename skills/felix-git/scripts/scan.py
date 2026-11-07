@@ -25,6 +25,8 @@ AWS_KEY = re.compile(rb"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")  # gitleaks skips AWS's 
 IMAGE = re.compile(r"\.(png|jpe?g|jfif|gif|webp|ico|svg|bmp|tiff?|hei[cf]|avif|mp4|mov|pdf)$", re.I)
 # Leading bytes of image formats, for files whose name doesn't say what they are.
 IMAGE_MAGIC = re.compile(rb"^(\x89PNG|\xff\xd8\xff|GIF8|RIFF....WEBP|....ftyp(hei[cfsx]|mif1|msf1|avif)|BM|II\*\0|MM\0\*|\0\0\x01\0|%PDF)", re.S)
+# Formats that are binary by design: an oversized one isn't text the scan missed. A UTF-16 BOM still counts as text.
+KNOWN_BINARY = re.compile(r"\.(woff2?|ttf|otf|eot|wasm|so|dylib|dll|exe|bin|o|a|class|pyc|mp3|wav|ogg|flac|m4a|webm|mkv|avi|psd|ai|sketch|fig|blend|fbx|glb|unitypackage|pck)$", re.I)
 LARGE = 1024 * 1024
 TEXT_LIMIT = 2 * 1024 * 1024
 
@@ -244,8 +246,9 @@ def main():
             image_paths[oid].add(path)
         if size > TEXT_LIMIT:
             prefix = blob_prefix(a.repo, oid)
-            if b"\0" in prefix and (not IMAGE.search(PurePosixPath(path).name)
-                                      or prefix.startswith((b"\xff\xfe", b"\xfe\xff"))):
+            name = PurePosixPath(path).name
+            binary_by_design = IMAGE.search(name) or ARCHIVE.search(path) or KNOWN_BINARY.search(name)
+            if b"\0" in prefix and (not binary_by_design or prefix.startswith((b"\xff\xfe", b"\xfe\xff"))):
                 report["unscanned_binary_text"].add(path)
         if (oid, path) not in seen and size <= TEXT_LIMIT:
             seen.add((oid, path))

@@ -14,6 +14,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - History publication now binds the effective fetch and push destinations to the repository recorded before rewriting.
 - Re-attribution matches the known Claude bot name/email pair instead of a person's name or an entire email domain.
 - NUL-containing historical files above the fallback text limit now make the scan incomplete instead of silently passing as clean.
+- That check skips formats that are binary by design (archives, databases, fonts, compiled code, audio and video, design files), and `push` names the blocking files instead of asking whether gitleaks is installed.
 
 ## [1.4.0] - 2026-11-05
 
