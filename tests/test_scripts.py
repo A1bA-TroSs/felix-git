@@ -915,6 +915,17 @@ class Scan(Base):
         self.assertIn("large16.txt", report["unscanned_binary_text"])
         self.assertNotIn(fake, r.stdout + r.stderr)
 
+    @needs_scanner
+    def test_oversized_binary_by_design_does_not_block(self):
+        blob = b"\0\1\2\3" * (700 * 1024)  # 2.8 MiB, NUL in the first bytes
+        for name in ("assets.zip", "data.sqlite", "font.woff2", "engine.wasm"):
+            (self.src / name).write_bytes(blob)
+        self.g("add", "."); self.g("commit", "-qm", "binaries")
+        r = self.scan(self.src)
+        report = json.loads(r.stdout)
+        self.assertEqual(report["unscanned_binary_text"], [])
+        self.assertNotEqual(r.returncode, 2)
+
     def planted(self):
         (self.src / "cfg.py").write_text(f'AWS_KEY = "{FAKE_KEY}"\nowner = "real.person@gmail.com"\n')
         (self.src / ".DS_Store").write_text("x")

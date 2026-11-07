@@ -860,6 +860,14 @@ def cmd_push(a):
         sys.exit(f"refused: these refs moved after the rewrite, so a push would publish commits verify never checked or drop later ones: {', '.join(moved)}")
     scan = subprocess.run([sys.executable, str(Path(__file__).with_name("scan.py")), a.repo], capture_output=True, text=True)
     if scan.returncode not in (0, 1):
+        try:
+            unscanned = json.loads(scan.stdout).get("unscanned_binary_text") or []
+        except ValueError:
+            unscanned = []
+        if unscanned:
+            sys.exit("refused: these files in history are over the 2 MiB text limit and look like wide text (NUL bytes), "
+                     f"so the scan couldn't read them: {', '.join(unscanned[:10])}. Review them, purge them, or rename a binary "
+                     "file to its real extension, then retry. Nothing goes public unscanned.")
         sys.exit("refused: the secret scan couldn't run (is gitleaks installed?). Nothing goes public unscanned.")
     if scan.returncode and not a.accept_findings:
         sys.exit("refused: the scan found secrets. Pass --accept-findings only if the owner saw them in the review and still said yes.")
